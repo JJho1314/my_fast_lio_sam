@@ -181,8 +181,8 @@ public:
 
     // Loop closure
     bool loopClosureEnableFlag;
-    float loopClosureFrequency;
-    int surroundingKeyframeSize;         //  submap size (when loop closure enabled)
+    float loopClosureFrequency;          // 回环检测频率
+    int surroundingKeyframeSize;         // submap size (when loop closure enabled)
     float historyKeyframeSearchRadius;   //闭环检测搜索半径
     float historyKeyframeSearchTimeDiff; //闭环检测时间阈值
     int historyKeyframeSearchNum;        // number of hostory key frames will be fused into a submap for loop closure
