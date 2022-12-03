@@ -107,6 +107,6 @@ add_executable(fastlio_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cp
 target_link_libraries(fastlio_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES})
 target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
 
-add_executable(mapOptmization src/mapOptmization.cpp)
+add_executable(mapOptmization src/mapOptmization.cpp src/Scancontext.cpp)
 target_link_libraries(mapOptmization ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${OpenMP_CXX_FLAGS} gtsam)
 target_include_directories(mapOptmization PRIVATE ${PYTHON_INCLUDE_DIRS})
