@@ -720,13 +720,12 @@ void saveKeyFramesAndFactor()
         return;
     // 激光里程计因子(from fast-lio),  输入的是frame_relative pose  帧间位姿(body 系下)
     addOdomFactor();
-    std::cout << "====================================================" << std::endl;
     // GPS因子 (UTM -> WGS84)
     addGPSFactor();
-    std::cout << "====================================================" << std::endl;
+
     // 闭环因子 (rs-loop-detect)  基于欧氏距离的检测
     addLoopFactor();
-    std::cout << "====================================================" << std::endl;
+
     // 执行优化
     isam->update(gtSAMgraph, initialEstimate);
     isam->update();
@@ -748,10 +747,10 @@ void saveKeyFramesAndFactor()
 
     // 优化结果
     isamCurrentEstimate = isam->calculateBestEstimate();
-    std::cout << "====================================================" << std::endl;
+
     // 当前帧位姿结果
     latestEstimate = isamCurrentEstimate.at<gtsam::Pose3>(isamCurrentEstimate.size() - 1);
-    std::cout << "====================================================" << std::endl;
+
     // cloudKeyPoses3D加入当前帧位置
     thisPose3D.x = latestEstimate.translation().x();
     thisPose3D.y = latestEstimate.translation().y();
@@ -2431,7 +2430,7 @@ int main(int argc, char **argv)
             // 5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合
             saveKeyFramesAndFactor();
             // 更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
-            std::cout << "====================================================" << std::endl;
+
             correctPoses();
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
