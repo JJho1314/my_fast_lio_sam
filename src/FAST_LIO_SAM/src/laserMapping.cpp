@@ -87,7 +87,7 @@ double kdtree_incremental_time = 0.0, kdtree_search_time = 0.0, kdtree_delete_ti
 double T1[MAXN], s_plot[MAXN], s_plot2[MAXN], s_plot3[MAXN], s_plot4[MAXN], s_plot5[MAXN], s_plot6[MAXN], s_plot7[MAXN], s_plot8[MAXN], s_plot9[MAXN], s_plot10[MAXN], s_plot11[MAXN];
 double match_time = 0, solve_time = 0, solve_const_H_time = 0;
 int kdtree_size_st = 0, kdtree_size_end = 0, add_point_size = 0, kdtree_delete_counter = 0;
-bool runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
+bool runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true, GnssPath_en = false;
 /**************************/
 
 float res_last[100000] = {0.0}; //残差，点到面距离平方和
@@ -236,7 +236,7 @@ enum eintialMethod
     gps = 1,
 } mintialMethod;
 string intialMethod;
-bool gps_initailized;
+bool gps_initailized = false;
 
 // Surrounding map
 float surroundingkeyframeAddingDistThreshold;  //  判断是否为关键帧的距离阈值
@@ -478,6 +478,25 @@ void getCurPose(state_ikfom cur_state)
     // transformTobeMapped[1] = eulerAngle(1);                //  pitch
     // transformTobeMapped[2] = eulerAngle(2);                //  yaw
 
+    // initialization
+    // 如果关键帧还是空的，就用imu的真值作为初始的rotation
+    if (cloudKeyPoses3D->points.empty())
+    {
+        transformTobeMapped[0] = initialPose[3];    //  roll  使用 eulerAngles(2,1,0) 方法时，顺序是 ypr
+        transformTobeMapped[1] = initialPose[4];    //  pitch
+        transformTobeMapped[2] = initialPose[5] + 1.5;    //  yaw
+        cout << "initial pose is" << initialPose[0] << "," << initialPose[1] << "," << initialPose[2] << endl;
+        transformTobeMapped[3] = initialPose[0];
+        transformTobeMapped[4] = initialPose[1];
+        transformTobeMapped[5] = initialPose[2];
+
+        //是否使用imu的初始朝向yaw作为整个地图的初始朝向 ，false则地图从0开始，true地图以imu的yaw作为初始朝向
+        if (!useImuHeadingInitialization)
+            transformTobeMapped[2] = 0;
+
+        return;
+    }
+
     transformTobeMapped[0] = eulerAngle(2);    //  roll  使用 eulerAngles(2,1,0) 方法时，顺序是 ypr
     transformTobeMapped[1] = eulerAngle(1);    //  pitch
     transformTobeMapped[2] = eulerAngle(0);    //  yaw
@@ -589,7 +608,7 @@ void addOdomFactor()
     if (cloudKeyPoses3D->points.empty())
     {
         // 第一帧初始化先验因子
-        gtsam::noiseModel::Diagonal::shared_ptr priorNoise = gtsam::noiseModel::Diagonal::Variances((gtsam::Vector(6) << 1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12).finished()); // rad*rad, meter*meter   // indoor 1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12    //  1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8
+        gtsam::noiseModel::Diagonal::shared_ptr priorNoise = gtsam::noiseModel::Diagonal::Variances((gtsam::Vector(6) << 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-8).finished()); // rad*rad, meter*meter   // indoor 1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12    //  1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8
         gtSAMgraph.add(gtsam::PriorFactor<gtsam::Pose3>(0, trans2gtsamPose(transformTobeMapped), priorNoise));
         // 变量节点设置初始值
         initialEstimate.insert(0, trans2gtsamPose(transformTobeMapped));
@@ -720,7 +739,7 @@ void saveKeyFramesAndFactor()
         return;
     // 激光里程计因子(from fast-lio),  输入的是frame_relative pose  帧间位姿(body 系下)
     addOdomFactor();
-    // GPS因子 (UTM -> WGS84)
+    // GPS因子 
     addGPSFactor();
 
     // 闭环因子 (rs-loop-detect)  基于欧氏距离的检测
@@ -1366,14 +1385,20 @@ void gpsHandler(const nav_msgs::Odometry::ConstPtr &gpsMsg)
     {
         if (!gps_initailized && (gpsMsg->pose.pose.position.x != 0 || gpsMsg->pose.pose.position.y != 0) && (gpsMsg->pose.covariance[0] < 0.003 && gpsMsg->pose.covariance[7] < 0.003))
         {
-
+            double imu_roll, imu_pitch, imu_yaw;
             Eigen::Vector3d Pwl;
             Eigen::Vector3d Pwi(gpsMsg->pose.pose.position.x, gpsMsg->pose.pose.position.y, gpsMsg->pose.pose.position.z);
             Eigen::Quaterniond Qwi(gpsMsg->pose.pose.orientation.w, gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y, gpsMsg->pose.pose.orientation.z);
+            tf::Quaternion imu_quat(gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y, gpsMsg->pose.pose.orientation.z, gpsMsg->pose.pose.orientation.w);
+            tf::Matrix3x3(imu_quat).getRPY(imu_roll, imu_pitch, imu_yaw); //进行转换
             Pwl = Pwi + Qwi.matrix() * Pil;
             cout << "GPS initailizes" << endl;
             initialPose.at(0) = Pwl.x();
             initialPose.at(1) = Pwl.y();
+            initialPose.at(2) = Pwl.z();
+            initialPose.at(3) = imu_roll;
+            initialPose.at(4) = imu_pitch;
+            initialPose.at(5) = imu_yaw;
 
             gps_initailized = true;
             last_E = initialPose.at(0);
@@ -1385,21 +1410,39 @@ void gpsHandler(const nav_msgs::Odometry::ConstPtr &gpsMsg)
     {
         if (last_E != gpsMsg->pose.pose.position.x || last_N != gpsMsg->pose.pose.position.y)
         {
+            if(GnssPath_en)
+            {
+                double imu_roll, imu_pitch, imu_yaw;
+                Eigen::Vector3d Pwl;
+                Eigen::Vector3d Pwi(gpsMsg->pose.pose.position.x, gpsMsg->pose.pose.position.y, gpsMsg->pose.pose.position.z);
+                Eigen::Quaterniond Qwi(gpsMsg->pose.pose.orientation.w, gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y, gpsMsg->pose.pose.orientation.z);
+                tf::Quaternion imu_quat(gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y, gpsMsg->pose.pose.orientation.z, gpsMsg->pose.pose.orientation.w);
+                tf::Matrix3x3(imu_quat).getRPY(imu_roll, imu_pitch, imu_yaw); //进行转换
+                Pwl = Pwi + Qwi.matrix() * Pil;
+                msg_gnss_pose.header.frame_id = "camera_init";
+                msg_gnss_pose.header.stamp = ros::Time().fromSec(gpsMsg->header.stamp.toSec());
+
+                msg_gnss_pose.pose.position.x = Pwl.x();  
+                msg_gnss_pose.pose.position.y = Pwl.y();
+                msg_gnss_pose.pose.position.z = Pwl.z();
+                gps_path.poses.push_back(msg_gnss_pose);
+            }
+
             gpsQueue.push_back(*gpsMsg);
         }
     }
 
-    // // 外参标定
-    // if (Calib_flag)
-    // {
-    //     CalibrationExRotation tmp;
-    //     Eigen::Quaterniond Qwi(gpsMsg->pose.pose.orientation.w, gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y, gpsMsg->pose.pose.orientation.z);
-    //     // Eigen::Vector3d Pwi(gpsMsg->pose.pose.position.x,gpsMsg->pose.pose.position.y,gpsMsg->pose.pose.position.z);
-    //     // Pwl= Pwi+ Qwi.matrix()*Pil;
-    //     tmp.Rwl = Qwi.toRotationMatrix();
-    //     tmp.timestamp = gpsMsg->header.stamp.toSec();
-    //     gps_cali.push(tmp);
-    // }
+    //  save_gnss path
+    PointTypePose thisPose6D;  
+    thisPose6D.x = gpsMsg->pose.pose.position.x ;
+    thisPose6D.y = gpsMsg->pose.pose.position.y ;
+    thisPose6D.z = gpsMsg->pose.pose.position.z ;
+    thisPose6D.intensity = 0;
+    thisPose6D.roll =0;
+    thisPose6D.pitch = 0;
+    thisPose6D.yaw = 0;
+    thisPose6D.time = lidar_end_time;
+    gnss_cloudKeyPoses6D->push_back(thisPose6D);   
 
     // cout<<"收到GPS"<<endl;
 }
@@ -1963,10 +2006,10 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     total_residual = 0.0;
 
     /** closest surface search and residual computation **/
-    // #ifdef MP_EN
-    omp_set_num_threads(numberOfCores);
-#pragma omp parallel for
-    // #endif
+    #ifdef MP_EN
+        omp_set_num_threads(numberOfCores);
+    #pragma omp parallel for
+    #endif
     for (int i = 0; i < feats_down_size; i++) //判断每个点的对应邻域是否符合平面点的假设
     {
         PointType &point_body = feats_down_body->points[i];   // lidar系下坐标
@@ -2096,6 +2139,7 @@ int main(int argc, char **argv)
     ros::NodeHandle nh;
 
     nh.param<bool>("publish/path_en", path_en, true);
+    nh.param<bool>("publish/GnssPath_en", GnssPath_en, true);
     nh.param<bool>("publish/scan_publish_en", scan_pub_en, true);
     nh.param<bool>("publish/dense_publish_en", dense_pub_en, true);
     nh.param<bool>("publish/scan_bodyframe_pub_en", scan_body_pub_en, true);
@@ -2103,7 +2147,7 @@ int main(int argc, char **argv)
     nh.param<string>("map_file_path", map_file_path, "");
     nh.param<string>("common/lid_topic", lid_topic, "/livox/lidar");
     nh.param<string>("common/imu_topic", imu_topic, "/livox/imu");
-    nh.param<string>("common/gpsTopic", gpsTopic, "/gps/fix"); // gnss
+    nh.param<string>("common/gpsTopic", gpsTopic, "/gps/correct_odom"); // gnss
     nh.param<bool>("common/time_sync_en", time_sync_en, false);
 
     nh.param<double>("filter_size_corner", filter_size_corner_min, 0.5);
@@ -2170,8 +2214,8 @@ int main(int argc, char **argv)
 
     nh.param<bool>("lio_sam/useImuHeadingInitialization", useImuHeadingInitialization, false);
     nh.param<bool>("lio_sam/useGpsElevation", useGpsElevation, false);
-    nh.param<float>("lio_sam/gpsCovThreshold", gpsCovThreshold, 2.0);
-    nh.param<float>("lio_sam/poseCovThreshold", poseCovThreshold, 25.0);
+    nh.param<float>("lio_sam/gpsCovThreshold", gpsCovThreshold, 1.0);
+    nh.param<float>("lio_sam/poseCovThreshold", poseCovThreshold, 0.01);
 
     nh.param<vector<double>>("lio_sam/extrinsicRot", extRotV, vector<double>());
     nh.param<vector<double>>("lio_sam/extrinsicRPY", extRPYV, vector<double>());
@@ -2195,9 +2239,9 @@ int main(int argc, char **argv)
     nh.param<float>("lio_sam/globalMapVisualizationLeafSize", globalMapVisualizationLeafSize, 1.0);
 
     // visual ikdtree map
-    nh.param<bool>("visulize_IkdtreeMap", visulize_IkdtreeMap, false);
+    nh.param<bool>("publish/visulize_IkdtreeMap", visulize_IkdtreeMap, false);
     // reconstruct ikdtree
-    nh.param<bool>("recontructKdTree", recontructKdTree, false);
+    nh.param<bool>("publish/recontructKdTree", recontructKdTree, false);
 
     // savMap
     nh.param<bool>("pcd_save/savePCD", savePCD, false);
@@ -2268,16 +2312,19 @@ int main(int argc, char **argv)
     /*** ROS subscribe initialization ***/
     ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ? nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
     ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
-    ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);           //  world系下稠密点云
-    ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_body", 100000); //  body系下稠密点云
-    ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>("/cloud_effected", 100000);           //  no used
-    ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/Laser_map", 100000);                   //  no used
+    ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>("fast_lio/cloud_registered", 100000);           //  world系下稠密点云
+    ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>("fast_lio/cloud_registered_body", 100000); //  body系下稠密点云
+    ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>("fast_lio/cloud_effected", 100000);           //  no used
+    ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("fast_lio/Laser_map", 100000);                   //  no used
     ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
-    ros::Publisher pubPath = nh.advertise<nav_msgs::Path>("/path", 1e00000);
+    ros::Publisher pubPath = nh.advertise<nav_msgs::Path>("fast_lio/path", 1e00000);
 
     ros::Publisher pubPathUpdate = nh.advertise<nav_msgs::Path>("fast_lio_sam/path_update", 100000); //  isam更新后的path
-    pubGnssPath = nh.advertise<nav_msgs::Path>("/gnss_path", 100000);
-    pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("fast_lio_sam/mapping/keyframe_submap", 1);      // 发布局部关键帧map的特征点云
+
+    if(GnssPath_en)
+        pubGnssPath = nh.advertise<nav_msgs::Path>("fast_lio_sam/gnss_path", 100000);
+        
+    pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("fast_lio_sam/mapping/map_global", 1);      // 发布局部关键帧map的特征点云
     pubOptimizedGlobalMap = nh.advertise<sensor_msgs::PointCloud2>("fast_lio_sam/mapping/map_global_optimized", 1); // 发布局部关键帧map的特征点云
 
     // loop clousre
@@ -2286,7 +2333,7 @@ int main(int argc, char **argv)
     // 发布当前关键帧经过闭环优化后的位姿变换之后的特征点云
     pubIcpKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("fast_lio_sam/mapping/icp_loop_closure_corrected_cloud", 1);
     // 发布闭环边，rviz中表现为闭环帧之间的连线
-    pubLoopConstraintEdge = nh.advertise<visualization_msgs::MarkerArray>("/fast_lio_sam/mapping/loop_closure_constraints", 1);
+    pubLoopConstraintEdge = nh.advertise<visualization_msgs::MarkerArray>("fast_lio_sam/mapping/loop_closure_constraints", 1);
 
     // gnss
     ros::Subscriber sub_gnss = nh.subscribe<nav_msgs::Odometry>(gpsTopic, 200000, gpsHandler);
@@ -2374,7 +2421,7 @@ int main(int argc, char **argv)
             int featsFromMapNum = ikdtree.validnum();
             kdtree_size_st = ikdtree.size();
 
-            cout << "[ mapping ]: In num: " << feats_undistort->points.size() << " downsamp " << feats_down_size << " Map num: " << featsFromMapNum << "effect num:" << effct_feat_num << endl;
+            // cout << "[ mapping ]: In num: " << feats_undistort->points.size() << " downsamp " << feats_down_size << " Map num: " << featsFromMapNum << " effect num:" << effct_feat_num << endl;
 
             /*** ICP and iterated Kalman filter update ***/
             if (feats_down_size < 5)
@@ -2430,7 +2477,6 @@ int main(int argc, char **argv)
             // 5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合
             saveKeyFramesAndFactor();
             // 更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
-
             correctPoses();
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
@@ -2441,8 +2487,10 @@ int main(int argc, char **argv)
             /******* Publish points *******/
             if (path_en)
             {
-                publish_path(pubPath);
-                publish_gnss_path(pubGnssPath);     //   发布gnss轨迹
+                // publish_path(pubPath);
+                if (GnssPath_en)
+                    publish_gnss_path(pubGnssPath);     //   发布gnss轨迹
+
                 publish_path_update(pubPathUpdate); //   发布经过isam2优化后的路径
                 static int jjj = 0;
                 jjj++;
@@ -2489,6 +2537,17 @@ int main(int argc, char **argv)
                 fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose() << " " << ext_euler.transpose() << " " << state_point.offset_T_L_I.transpose() << " " << state_point.vel.transpose()
                          << " " << state_point.bg.transpose() << " " << state_point.ba.transpose() << " " << state_point.grav << " " << feats_undistort->points.size() << endl;
                 dump_lio_state_to_log(fp);
+            }
+            else{
+                frame_num++;
+                kdtree_size_end = ikdtree.size();
+                aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + (t5 - t0) / frame_num;
+                aver_time_icp = aver_time_icp * (frame_num - 1) / frame_num + (t_update_end - t_update_start) / frame_num;
+                aver_time_match = aver_time_match * (frame_num - 1) / frame_num + (match_time) / frame_num;
+                aver_time_incre = aver_time_incre * (frame_num - 1) / frame_num + (kdtree_incremental_time) / frame_num;
+                aver_time_solve = aver_time_solve * (frame_num - 1) / frame_num + (solve_time + solve_H_time) / frame_num;
+                aver_time_const_H_time = aver_time_const_H_time * (frame_num - 1) / frame_num + solve_time / frame_num;
+                printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n", t1 - t0, aver_time_match, aver_time_solve, t3 - t1, t5 - t3, aver_time_consu, aver_time_icp, aver_time_const_H_time);
             }
         }
 
