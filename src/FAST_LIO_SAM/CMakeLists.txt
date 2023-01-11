@@ -72,7 +72,8 @@ include_directories(
   ${PYTHON_INCLUDE_DIRS}
   ${GTSAM_INCLUDE_DIR}
   ${GeographicLib_INCLUDE_DIRS}
-  include)
+  include
+  ./src/tools/)
 
   # link directories
 # link_directories(

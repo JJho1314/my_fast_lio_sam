@@ -62,10 +62,6 @@
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/ISAM2.h>
 
-// gnss
-#include "GNSS_Processing.hpp"
-#include "sensor_msgs/NavSatFix.h"
-
 // save map
 #include "fast_lio_sam/save_map.h"
 #include "fast_lio_sam/save_pose.h"
@@ -76,6 +72,7 @@
 #include <iomanip>
 
 // using namespace gtsam;
+#include "tools_mem_used.h"
 
 #define INIT_TIME (0.1)
 #define LASER_POINT_COV (0.001)
@@ -269,8 +266,6 @@ float gpsCovThreshold;  //   gps方向角和高度差的协方差阈值
 float poseCovThreshold; //  位姿协方差阈值  from isam2
 
 bool gnss_inited = false; //  是否完成gnss初始化
-shared_ptr<GnssProcess> p_gnss(new GnssProcess());
-GnssProcess gnss_data;
 ros::Publisher pubGnssPath;
 nav_msgs::Path gps_path;
 
@@ -294,6 +289,8 @@ ros::ServiceServer srvSaveMap;
 ros::ServiceServer srvSavePose;
 bool savePCD;            // 是否保存地图
 string savePCDDirectory; // 保存路径
+
+double g_last_stamped_mem_mb = 0;
 
 /**
  * 更新里程计轨迹
@@ -484,7 +481,8 @@ void getCurPose(state_ikfom cur_state)
     {
         transformTobeMapped[0] = initialPose[3];    //  roll  使用 eulerAngles(2,1,0) 方法时，顺序是 ypr
         transformTobeMapped[1] = initialPose[4];    //  pitch
-        transformTobeMapped[2] = initialPose[5] + 1.5;    //  yaw
+        // transformTobeMapped[2] = initialPose[5] + 1.5;    //  yaw
+        transformTobeMapped[2] = initialPose[5];    //  yaw
         cout << "initial pose is" << initialPose[0] << "," << initialPose[1] << "," << initialPose[2] << endl;
         transformTobeMapped[3] = initialPose[0];
         transformTobeMapped[4] = initialPose[1];
@@ -846,6 +844,7 @@ void recontructIKdTree()
         kdtreeGlobalMapPoses->radiusSearch(cloudKeyPoses3D->back(), globalMapVisualizationSearchRadius, pointSearchIndGlobalMap, pointSearchSqDisGlobalMap, 0);
         mtx.unlock();
 
+
         for (int i = 0; i < (int)pointSearchIndGlobalMap.size(); ++i)
             subMapKeyPoses->push_back(cloudKeyPoses3D->points[pointSearchIndGlobalMap[i]]); //  subMap的pose集合
         // 降采样
@@ -854,6 +853,9 @@ void recontructIKdTree()
         downSizeFilterSubMapKeyPoses.setInputCloud(subMapKeyPoses);
         downSizeFilterSubMapKeyPoses.filter(*subMapKeyPosesDS); //  subMap poses  downsample
         // 提取局部相邻关键帧对应的特征点云
+
+    //     omp_set_num_threads(numberOfCores);
+    // #pragma omp parallel for
         for (int i = 0; i < (int)subMapKeyPosesDS->size(); ++i)
         {
             // 距离过大
@@ -2006,10 +2008,8 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     total_residual = 0.0;
 
     /** closest surface search and residual computation **/
-    #ifdef MP_EN
-        omp_set_num_threads(numberOfCores);
-    #pragma omp parallel for
-    #endif
+    omp_set_num_threads(numberOfCores);
+#pragma omp parallel for
     for (int i = 0; i < feats_down_size; i++) //判断每个点的对应邻域是否符合平面点的假设
     {
         PointType &point_body = feats_down_body->points[i];   // lidar系下坐标
@@ -2484,6 +2484,9 @@ int main(int argc, char **argv)
             t3 = omp_get_wtime();
             map_incremental();
             t5 = omp_get_wtime();
+
+            int mem_used_mb = ( int ) ( Common_tools::get_RSS_Mb() );
+
             /******* Publish points *******/
             if (path_en)
             {
@@ -2539,15 +2542,17 @@ int main(int argc, char **argv)
                 dump_lio_state_to_log(fp);
             }
             else{
-                frame_num++;
-                kdtree_size_end = ikdtree.size();
-                aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + (t5 - t0) / frame_num;
-                aver_time_icp = aver_time_icp * (frame_num - 1) / frame_num + (t_update_end - t_update_start) / frame_num;
-                aver_time_match = aver_time_match * (frame_num - 1) / frame_num + (match_time) / frame_num;
-                aver_time_incre = aver_time_incre * (frame_num - 1) / frame_num + (kdtree_incremental_time) / frame_num;
-                aver_time_solve = aver_time_solve * (frame_num - 1) / frame_num + (solve_time + solve_H_time) / frame_num;
-                aver_time_const_H_time = aver_time_const_H_time * (frame_num - 1) / frame_num + solve_time / frame_num;
-                printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n", t1 - t0, aver_time_match, aver_time_solve, t3 - t1, t5 - t3, aver_time_consu, aver_time_icp, aver_time_const_H_time);
+                // frame_num++;
+                // kdtree_size_end = ikdtree.size();
+                // aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + (t5 - t0) / frame_num;
+                // aver_time_icp = aver_time_icp * (frame_num - 1) / frame_num + (t_update_end - t_update_start) / frame_num;
+                // aver_time_match = aver_time_match * (frame_num - 1) / frame_num + (match_time) / frame_num;
+                // aver_time_incre = aver_time_incre * (frame_num - 1) / frame_num + (kdtree_incremental_time) / frame_num;
+                // aver_time_solve = aver_time_solve * (frame_num - 1) / frame_num + (solve_time + solve_H_time) / frame_num;
+                // aver_time_const_H_time = aver_time_const_H_time * (frame_num - 1) / frame_num + solve_time / frame_num;
+                // printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n", t1 - t0, aver_time_match, aver_time_solve, t3 - t1, t5 - t3, aver_time_consu, aver_time_icp, aver_time_const_H_time);
+                printf("[ mapping ]: time: all: %0.6f, Memory used (Mb): %d Mb \n", t5-t0, mem_used_mb); 
+                // cout << "Memory used (Mb): " << mem_used_mb << end; 
             }
         }
 

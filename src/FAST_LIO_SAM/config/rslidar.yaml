@@ -67,8 +67,8 @@ lio_sam:
     # GPS Settings
     useImuHeadingInitialization: true           # if using GPS data, set to "true"
     useGpsElevation: true                      # 海拔高度，是否使用gps确定z的位置if GPS elevation is bad, set to "false"
-    gpsCovThreshold: 1.0                        # m^2, threshold for using GPS data
-    poseCovThreshold: 0.1                       # m^2, threshold for using GPS data
+    gpsCovThreshold: 2.0                        # m^2, threshold for using GPS data
+    poseCovThreshold: 1.0                       # m^2, threshold for using GPS data
 
     # Extrinsics (imu -> lidar)
     # T_LI
