@@ -1,8 +1,12 @@
 globalmap_server:
+    globalSurfMap_dirctory: "/home/jjho/map_campus/Surf_map/"
+    globalSurfMap_pcd: "/home/jjho/map_campus/Surf_map/pcd_info.csv"
     Matching_method: "loam"    # loam or ndt
     intialMethod: "gps"  # gps  human
     initialPose: [-51.0476009806,80.227463481,0, 0, 0, 0]  #x,y,z,r,p,y
     optimization_with_GPS: true
+    area_size: 50
+    margin: 100
 
 common:
     lid_topic:  "/velodyne_points"
@@ -39,6 +43,9 @@ lio_sam:
     # robot motion constraint (in case you are using a 2D robot)
     z_tollerance: 1                            # meters
     rotation_tollerance: 0.25                     # radians
+
+    min_range: 1.8     #default 1.0
+    max_range: 100.0   # DO NOT BE TOO SMALL
 
     # CPU Params
     numberOfCores: 20                              # number of cores for mapping optimization
@@ -86,12 +93,12 @@ lio_sam:
 
 publish:
     path_en:  true
-    GnssPath_en: true
+    GnssPath_en: false
     scan_publish_en:  true       # false: close all the point cloud output
     dense_publish_en: false       # false: low down the points number in a global-frame point clouds scan.
     scan_bodyframe_pub_en: false  # true: output the point cloud scans in IMU-body-frame
     # visual iktree_map  
-    visulize_IkdtreeMap: false
+    visulize_IkdtreeMap: true
     # visual iktree_map  
     recontructKdTree: true
 
