@@ -965,10 +965,14 @@ void loopFindNearKeyframes(pcl::PointCloud<PointType>::Ptr &nearKeyframes, const
     // 提取key索引的关键帧前后相邻若干帧的关键帧特征点集合
     nearKeyframes->clear();
     int cloudSize = copy_cloudKeyPoses6D->size();
+    auto surfcloud_keyframes_size = surfCloudKeyFrames.size() ;
     for (int i = -searchNum; i <= searchNum; ++i)
     {
         int keyNear = key + i;
         if (keyNear < 0 || keyNear >= cloudSize)
+            continue;
+
+        if (keyNear < 0 || keyNear >= surfcloud_keyframes_size)
             continue;
 
         // *nearKeyframes += *transformPointCloud(cornerCloudKeyFrames[keyNear], &copy_cloudKeyPoses6D->points[keyNear]);
@@ -1367,19 +1371,6 @@ std::chrono::steady_clock::time_point last;
 double last_E, last_N, last_U;
 void gpsHandler(const nav_msgs::Odometry::ConstPtr &gpsMsg)
 {
-    // // 每隔一秒接收一次数据
-    // ++gps_count;
-    // gps_count%=200;
-    // if(gps_count!=0){
-    //     return;
-    // }
-    // now = std::chrono::steady_clock::now();
-
-    // double t_track = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(now - last).count();
-    // last = now;
-    // cout<<"一个周期的时间是"<<t_track<<endl;
-    // cout<<"gps_x"<<gpsMsg->pose.pose.position.x<<endl;
-    // cout<<"gps_y"<<gpsMsg->pose.pose.position.y<<endl;
 
     if (mintialMethod == gps)
     {
@@ -1854,97 +1845,6 @@ bool savePoseService(fast_lio_sam::save_poseRequest &req, fast_lio_sam::save_pos
 }
 
 /**
- * 保存全局关键帧特征点集合
- */
-bool saveMapService(fast_lio_sam::save_mapRequest &req, fast_lio_sam::save_mapResponse &res)
-{
-    string saveMapDirectory;
-
-    cout << "****************************************************" << endl;
-    cout << "Saving map to pcd files ..." << endl;
-    if (req.destination.empty())
-        saveMapDirectory = std::getenv("HOME") + savePCDDirectory;
-    else
-        saveMapDirectory = std::getenv("HOME") + req.destination;
-    cout << "Save destination: " << saveMapDirectory << endl;
-    // 这个代码太坑了！！注释掉
-    //   int unused = system((std::string("exec rm -r ") + saveMapDirectory).c_str());
-    //   unused = system((std::string("mkdir -p ") + saveMapDirectory).c_str());
-    // 保存历史关键帧位姿
-    pcl::io::savePCDFileBinary(saveMapDirectory + "/trajectory.pcd", *cloudKeyPoses3D);      // 关键帧位置
-    pcl::io::savePCDFileBinary(saveMapDirectory + "/transformations.pcd", *cloudKeyPoses6D); // 关键帧位姿
-    // 提取历史关键帧角点、平面点集合
-    //   pcl::PointCloud<PointType>::Ptr globalCornerCloud(new pcl::PointCloud<PointType>());
-    //   pcl::PointCloud<PointType>::Ptr globalCornerCloudDS(new pcl::PointCloud<PointType>());
-    pcl::PointCloud<PointType>::Ptr globalSurfCloud(new pcl::PointCloud<PointType>());
-    pcl::PointCloud<PointType>::Ptr globalSurfCloudDS(new pcl::PointCloud<PointType>());
-    pcl::PointCloud<PointType>::Ptr globalMapCloud(new pcl::PointCloud<PointType>());
-
-    // 注意：拼接地图时，keyframe是lidar系，而fastlio更新后的存到的cloudKeyPoses6D 关键帧位姿是body系下的，需要把
-    // cloudKeyPoses6D  转换为T_world_lidar 。 T_world_lidar = T_world_body * T_body_lidar , T_body_lidar 是外参
-    for (int i = 0; i < (int)cloudKeyPoses6D->size(); i++)
-    {
-        //   *globalCornerCloud += *transformPointCloud(cornerCloudKeyFrames[i],  &cloudKeyPoses6D->points[i]);
-        *globalSurfCloud += *transformPointCloud(surfCloudKeyFrames[i], &cloudKeyPoses6D->points[i]);
-        cout << "\r" << std::flush << "Processing feature cloud " << i << " of " << cloudKeyPoses6D->size() << " ...";
-    }
-
-    if (req.resolution != 0)
-    {
-        cout << "\n\nSave resolution: " << req.resolution << endl;
-
-        // 降采样
-        // downSizeFilterCorner.setInputCloud(globalCornerCloud);
-        // downSizeFilterCorner.setLeafSize(req.resolution, req.resolution, req.resolution);
-        // downSizeFilterCorner.filter(*globalCornerCloudDS);
-        // pcl::io::savePCDFileBinary(saveMapDirectory + "/CornerMap.pcd", *globalCornerCloudDS);
-        // 降采样
-        downSizeFilterSurf.setInputCloud(globalSurfCloud);
-        downSizeFilterSurf.setLeafSize(req.resolution, req.resolution, req.resolution);
-        downSizeFilterSurf.filter(*globalSurfCloudDS);
-        pcl::io::savePCDFileBinary(saveMapDirectory + "/SurfMap.pcd", *globalSurfCloudDS);
-    }
-    else
-    {
-        //   downSizeFilterCorner.setLeafSize(mappingCornerLeafSize, mappingCornerLeafSize, mappingCornerLeafSize);
-        downSizeFilterSurf.setInputCloud(globalSurfCloud);
-        downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
-        downSizeFilterSurf.filter(*globalSurfCloudDS);
-        // pcl::io::savePCDFileBinary(saveMapDirectory + "/CornerMap.pcd", *globalCornerCloud);
-        // pcl::io::savePCDFileBinary(saveMapDirectory + "/SurfMap.pcd", *globalSurfCloud);           //  稠密点云地图
-    }
-
-    // 保存到一起，全局关键帧特征点集合
-    //   *globalMapCloud += *globalCornerCloud;
-    *globalMapCloud += *globalSurfCloud;
-    pcl::io::savePCDFileBinary(saveMapDirectory + "/filterGlobalMap.pcd", *globalSurfCloudDS);  //  滤波后地图
-    int ret = pcl::io::savePCDFileBinary(saveMapDirectory + "/GlobalMap.pcd", *globalMapCloud); //  稠密地图
-    res.success = ret == 0;
-
-    cout << "****************************************************" << endl;
-    cout << "Saving map to pcd files completed\n"
-         << endl;
-
-    // visial optimize global map on viz
-    ros::Time timeLaserInfoStamp = ros::Time().fromSec(lidar_end_time);
-    string odometryFrame = "camera_init";
-    publishCloud(&pubOptimizedGlobalMap, globalSurfCloudDS, timeLaserInfoStamp, odometryFrame);
-
-    return true;
-}
-
-void saveMap()
-{
-    fast_lio_sam::save_mapRequest req;
-    fast_lio_sam::save_mapResponse res;
-    // 保存全局关键帧特征点集合
-    if (!saveMapService(req, res))
-    {
-        cout << "Fail to save map" << endl;
-    }
-}
-
-/**
  * 发布局部关键帧map的特征点云
  */
 void publishGlobalMap()
@@ -1997,6 +1897,96 @@ void publishGlobalMap()
     publishCloud(&pubLaserCloudSurround, globalMapKeyFramesDS, timeLaserInfoStamp, odometryFrame);
 }
 
+bool saveMapService(fast_lio_sam::save_mapRequest& req, fast_lio_sam::save_mapResponse& res)
+{
+    string saveMapDirectory;
+
+    cout << "****************************************************" << endl;
+    cout << "Saving map to pcd files ..." << endl;
+    if(req.destination.empty()) saveMapDirectory = std::getenv("HOME") + savePCDDirectory;
+    else saveMapDirectory = std::getenv("HOME") + req.destination;
+
+    // 保存历史关键帧位姿
+    pcl::io::savePCDFileBinary(saveMapDirectory + "/trajectory.pcd", *cloudKeyPoses3D);                    // 关键帧位置
+    pcl::io::savePCDFileBinary(saveMapDirectory + "/transformations.pcd", *cloudKeyPoses6D);      // 关键帧位姿
+    // 提取历史关键帧角点、平面点集合
+    //   pcl::PointCloud<PointType>::Ptr globalCornerCloud(new pcl::PointCloud<PointType>());
+    //   pcl::PointCloud<PointType>::Ptr globalCornerCloudDS(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr globalSurfCloud(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr globalSurfCloudDS(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr globalMapCloud(new pcl::PointCloud<PointType>());
+
+    // 注意：拼接地图时，keyframe是lidar系，而fastlio更新后的存到的cloudKeyPoses6D 关键帧位姿是body系下的，需要把
+    //cloudKeyPoses6D  转换为T_world_lidar 。 T_world_lidar = T_world_body * T_body_lidar , T_body_lidar 是外参
+    for (int i = 0; i < (int)cloudKeyPoses6D->size(); i++) {
+        //   *globalCornerCloud += *transformPointCloud(cornerCloudKeyFrames[i],  &cloudKeyPoses6D->points[i]);
+        *globalSurfCloud   += *transformPointCloud(surfCloudKeyFrames[i],    &cloudKeyPoses6D->points[i]);
+        cout << "\r" << std::flush << "Processing feature cloud " << i << " of " << cloudKeyPoses6D->size() << " ..." << endl;
+    }
+
+    if(req.resolution != 0)
+    {
+    cout << "\n\nSave resolution: " << req.resolution << endl;
+
+    // 降采样
+    // downSizeFilterCorner.setInputCloud(globalCornerCloud);
+    // downSizeFilterCorner.setLeafSize(req.resolution, req.resolution, req.resolution);
+    // downSizeFilterCorner.filter(*globalCornerCloudDS);
+    // pcl::io::savePCDFileBinary(saveMapDirectory + "/CornerMap.pcd", *globalCornerCloudDS);
+    // 降采样
+    downSizeFilterSurf.setInputCloud(globalSurfCloud);
+    downSizeFilterSurf.setLeafSize(req.resolution, req.resolution, req.resolution);
+    downSizeFilterSurf.filter(*globalSurfCloudDS);
+    pcl::io::savePCDFileBinary(saveMapDirectory + "/SurfMap.pcd", *globalSurfCloudDS);
+    }
+    else
+    {
+    //   downSizeFilterCorner.setLeafSize(mappingCornerLeafSize, mappingCornerLeafSize, mappingCornerLeafSize);
+        downSizeFilterSurf.setInputCloud(globalSurfCloud);
+        downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
+        downSizeFilterSurf.filter(*globalSurfCloudDS);
+    // pcl::io::savePCDFileBinary(saveMapDirectory + "/CornerMap.pcd", *globalCornerCloud);       
+    // pcl::io::savePCDFileBinary(saveMapDirectory + "/SurfMap.pcd", *globalSurfCloud);           //  稠密点云地图
+    }
+
+    // 保存到一起，全局关键帧特征点集合
+//   *globalMapCloud += *globalCornerCloud;
+    *globalMapCloud += *globalSurfCloud;
+    pcl::io::savePCDFileBinary(saveMapDirectory + "/filterGlobalMap.pcd", *globalSurfCloudDS);       //  滤波后地图
+    int ret = pcl::io::savePCDFileBinary(saveMapDirectory + "/GlobalMap.pcd", *globalMapCloud);       //  稠密地图
+    res.success = ret == 0;
+
+    cout << "****************************************************" << endl;
+    cout << "Saving map to pcd files completed\n" << endl;
+
+    return true;
+}
+
+void saveMap()
+{
+    fast_lio_sam::save_mapRequest req;
+    fast_lio_sam::save_mapResponse res;
+    // 保存全局关键帧特征点集合
+    if (!saveMapService(req, res))
+    {
+        cout << "Fail to save map" << endl;
+    }
+}
+
+/**
+ * 保存全局关键帧特征点集合
+ */
+// 发布全局地图和保存地图
+void visualizeGlobalMapThread()
+{
+    ros::Rate rate(0.5);
+    while (ros::ok())
+    {
+        rate.sleep();
+        publishGlobalMap();
+    }
+}
+
 //构造H矩阵
 void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data)
 {
@@ -2006,7 +1996,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     total_residual = 0.0;
 
     /** closest surface search and residual computation **/
-    omp_set_num_threads(numberOfCores);
+    omp_set_num_threads(numberOfCores); //结合cmake改成使用全部cpu线程,不然内存上涨会更快
 #pragma omp parallel for
     for (int i = 0; i < feats_down_size; i++) //判断每个点的对应邻域是否符合平面点的假设
     {
@@ -2294,18 +2284,18 @@ int main(int argc, char **argv)
     kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
 
     /*** debug record ***/
-    FILE *fp;
-    string pos_log_dir = root_dir + "/Log/pos_log.txt";
-    fp = fopen(pos_log_dir.c_str(), "w");
+    // FILE *fp;
+    // string pos_log_dir = root_dir + "/Log/pos_log.txt";
+    // fp = fopen(pos_log_dir.c_str(), "w");
 
-    ofstream fout_pre, fout_out, fout_dbg;
-    fout_pre.open(DEBUG_FILE_DIR("mat_pre.txt"), ios::out);
-    fout_out.open(DEBUG_FILE_DIR("mat_out.txt"), ios::out);
-    fout_dbg.open(DEBUG_FILE_DIR("dbg.txt"), ios::out);
-    if (fout_pre && fout_out)
-        cout << "~~~~" << ROOT_DIR << " file opened" << endl;
-    else
-        cout << "~~~~" << ROOT_DIR << " doesn't exist" << endl;
+    // ofstream fout_pre, fout_out, fout_dbg;
+    // fout_pre.open(DEBUG_FILE_DIR("mat_pre.txt"), ios::out);
+    // fout_out.open(DEBUG_FILE_DIR("mat_out.txt"), ios::out);
+    // fout_dbg.open(DEBUG_FILE_DIR("dbg.txt"), ios::out);
+    // if (fout_pre && fout_out)
+    //     cout << "~~~~" << ROOT_DIR << " file opened" << endl;
+    // else
+    //     cout << "~~~~" << ROOT_DIR << " doesn't exist" << endl;
 
     /*** ROS subscribe initialization ***/
     ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ? nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
@@ -2336,7 +2326,7 @@ int main(int argc, char **argv)
     // gnss
     ros::Subscriber sub_gnss = nh.subscribe<nav_msgs::Odometry>(gpsTopic, 200000, gpsHandler);
 
-    // saveMap  发布地图保存服务
+    // saveMap  发布地图保存服务  
     srvSaveMap = nh.advertiseService("/save_map", &saveMapService);
 
     // savePose  发布轨迹保存服务
@@ -2344,6 +2334,7 @@ int main(int argc, char **argv)
 
     // 回环检测线程
     std::thread loopthread(&loopClosureThread);
+    std::thread visualizeMapThread(visualizeGlobalMapThread);
 
     //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
@@ -2433,8 +2424,8 @@ int main(int argc, char **argv)
 
             // lidar --> imu
             V3D ext_euler = SO3ToEuler(state_point.offset_R_L_I);
-            fout_pre << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose() << " " << ext_euler.transpose() << " " << state_point.offset_T_L_I.transpose() << " " << state_point.vel.transpose()
-                     << " " << state_point.bg.transpose() << " " << state_point.ba.transpose() << " " << state_point.grav << endl;
+            // fout_pre << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose() << " " << ext_euler.transpose() << " " << state_point.offset_T_L_I.transpose() << " " << state_point.vel.transpose()
+            //          << " " << state_point.bg.transpose() << " " << state_point.ba.transpose() << " " << state_point.grav << endl;
 
             if (visulize_IkdtreeMap) // If you need to see map point, change to "if(1)"
             {
@@ -2493,12 +2484,6 @@ int main(int argc, char **argv)
                     publish_gnss_path(pubGnssPath);     //   发布gnss轨迹
 
                 publish_path_update(pubPathUpdate); //   发布经过isam2优化后的路径
-                static int jjj = 0;
-                jjj++;
-                if (jjj % 100 == 0)
-                {
-                    publishGlobalMap(); //  发布局部点云特征地图
-                }
             }
             if (scan_pub_en || pcd_save_en)
                 publish_frame_world(pubLaserCloudFull); //   发布world系下的点云
@@ -2511,35 +2496,35 @@ int main(int argc, char **argv)
             // publish_map(pubLaserCloudMap);
 
             /*** Debug variables ***/
-            if (runtime_pos_log)
-            {
-                frame_num++;
-                kdtree_size_end = ikdtree.size();
-                aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + (t5 - t0) / frame_num;
-                aver_time_icp = aver_time_icp * (frame_num - 1) / frame_num + (t_update_end - t_update_start) / frame_num;
-                aver_time_match = aver_time_match * (frame_num - 1) / frame_num + (match_time) / frame_num;
-                aver_time_incre = aver_time_incre * (frame_num - 1) / frame_num + (kdtree_incremental_time) / frame_num;
-                aver_time_solve = aver_time_solve * (frame_num - 1) / frame_num + (solve_time + solve_H_time) / frame_num;
-                aver_time_const_H_time = aver_time_const_H_time * (frame_num - 1) / frame_num + solve_time / frame_num;
-                T1[time_log_counter] = Measures.lidar_beg_time;
-                s_plot[time_log_counter] = t5 - t0;
-                s_plot2[time_log_counter] = feats_undistort->points.size();
-                s_plot3[time_log_counter] = kdtree_incremental_time;
-                s_plot4[time_log_counter] = kdtree_search_time;
-                s_plot5[time_log_counter] = kdtree_delete_counter;
-                s_plot6[time_log_counter] = kdtree_delete_time;
-                s_plot7[time_log_counter] = kdtree_size_st;
-                s_plot8[time_log_counter] = kdtree_size_end;
-                s_plot9[time_log_counter] = aver_time_consu;
-                s_plot10[time_log_counter] = add_point_size;
-                time_log_counter++;
-                printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n", t1 - t0, aver_time_match, aver_time_solve, t3 - t1, t5 - t3, aver_time_consu, aver_time_icp, aver_time_const_H_time);
-                ext_euler = SO3ToEuler(state_point.offset_R_L_I);
-                fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose() << " " << ext_euler.transpose() << " " << state_point.offset_T_L_I.transpose() << " " << state_point.vel.transpose()
-                         << " " << state_point.bg.transpose() << " " << state_point.ba.transpose() << " " << state_point.grav << " " << feats_undistort->points.size() << endl;
-                dump_lio_state_to_log(fp);
-            }
-            else{
+            // if (runtime_pos_log)
+            // {
+            //     frame_num++;
+            //     kdtree_size_end = ikdtree.size();
+            //     aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + (t5 - t0) / frame_num;
+            //     aver_time_icp = aver_time_icp * (frame_num - 1) / frame_num + (t_update_end - t_update_start) / frame_num;
+            //     aver_time_match = aver_time_match * (frame_num - 1) / frame_num + (match_time) / frame_num;
+            //     aver_time_incre = aver_time_incre * (frame_num - 1) / frame_num + (kdtree_incremental_time) / frame_num;
+            //     aver_time_solve = aver_time_solve * (frame_num - 1) / frame_num + (solve_time + solve_H_time) / frame_num;
+            //     aver_time_const_H_time = aver_time_const_H_time * (frame_num - 1) / frame_num + solve_time / frame_num;
+            //     T1[time_log_counter] = Measures.lidar_beg_time;
+            //     s_plot[time_log_counter] = t5 - t0;
+            //     s_plot2[time_log_counter] = feats_undistort->points.size();
+            //     s_plot3[time_log_counter] = kdtree_incremental_time;
+            //     s_plot4[time_log_counter] = kdtree_search_time;
+            //     s_plot5[time_log_counter] = kdtree_delete_counter;
+            //     s_plot6[time_log_counter] = kdtree_delete_time;
+            //     s_plot7[time_log_counter] = kdtree_size_st;
+            //     s_plot8[time_log_counter] = kdtree_size_end;
+            //     s_plot9[time_log_counter] = aver_time_consu;
+            //     s_plot10[time_log_counter] = add_point_size;
+            //     time_log_counter++;
+            //     printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n", t1 - t0, aver_time_match, aver_time_solve, t3 - t1, t5 - t3, aver_time_consu, aver_time_icp, aver_time_const_H_time);
+            //     ext_euler = SO3ToEuler(state_point.offset_R_L_I);
+            //     fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose() << " " << ext_euler.transpose() << " " << state_point.offset_T_L_I.transpose() << " " << state_point.vel.transpose()
+            //              << " " << state_point.bg.transpose() << " " << state_point.ba.transpose() << " " << state_point.grav << " " << feats_undistort->points.size() << endl;
+            //     dump_lio_state_to_log(fp);
+            // }
+            // else{
                 // frame_num++;
                 // kdtree_size_end = ikdtree.size();
                 // aver_time_consu = aver_time_consu * (frame_num - 1) / frame_num + (t5 - t0) / frame_num;
@@ -2551,46 +2536,28 @@ int main(int argc, char **argv)
                 // printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n", t1 - t0, aver_time_match, aver_time_solve, t3 - t1, t5 - t3, aver_time_consu, aver_time_icp, aver_time_const_H_time);
                 printf("[ mapping ]: time: all: %0.6f, Memory used (Mb): %d Mb \n", t5-t0, mem_used_mb); 
                 // cout << "Memory used (Mb): " << mem_used_mb << end; 
-            }
+        //     }
         }
 
         status = ros::ok();
         rate.sleep();
     }
 
-    /**************** save map ****************/
+    /**************** fast lio 的原始地图报错不需要用 ****************/
     /* 1. make sure you have enough memories
     /* 2. pcd save will largely influence the real-time performences **/
-    if (pcl_wait_save->size() > 0 && pcd_save_en)
-    {
-        string file_name = string("scans.pcd");
-        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
-        pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to /PCD/" << file_name << endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
-    }
+    // if (pcl_wait_save->size() > 0 && pcd_save_en)
+    // {
+    //     string file_name = string("scans.pcd");
+    //     string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
+    //     pcl::PCDWriter pcd_writer;
+    //     cout << "current scan saved to /PCD/" << file_name << endl;
+    //     pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+    // }
 
-    fout_out.close();
-    fout_pre.close();
+    // fout_out.close();
+    // fout_pre.close();
 
-    if (runtime_pos_log)
-    {
-        vector<double> t, s_vec, s_vec2, s_vec3, s_vec4, s_vec5, s_vec6, s_vec7;
-        FILE *fp2;
-        string log_dir = root_dir + "/Log/fast_lio_time_log.csv";
-        fp2 = fopen(log_dir.c_str(), "w");
-        fprintf(fp2, "time_stamp, total time, scan point size, incremental time, search time, delete size, delete time, tree size st, tree size end, add point size, preprocess time\n");
-        for (int i = 0; i < time_log_counter; i++)
-        {
-            fprintf(fp2, "%0.8f,%0.8f,%d,%0.8f,%0.8f,%d,%0.8f,%d,%d,%d,%0.8f\n", T1[i], s_plot[i], int(s_plot2[i]), s_plot3[i], s_plot4[i], int(s_plot5[i]), s_plot6[i], int(s_plot7[i]), int(s_plot8[i]), int(s_plot10[i]), s_plot11[i]);
-            t.push_back(T1[i]);
-            s_vec.push_back(s_plot9[i]);
-            s_vec2.push_back(s_plot3[i] + s_plot6[i]);
-            s_vec3.push_back(s_plot4[i]);
-            s_vec5.push_back(s_plot[i]);
-        }
-        fclose(fp2);
-    }
 
     startFlag = false;
     loopthread.join(); //  分离线程

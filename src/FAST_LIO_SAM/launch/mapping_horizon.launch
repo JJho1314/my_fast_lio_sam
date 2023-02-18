@@ -9,7 +9,8 @@
 	<param name="feature_extract_enable" type="bool" value="0"/>
 <!--	不基于特征，每隔几个点保存一个用于配准-->
 	<param name="point_filter_num" type="int" value="3"/>
-	<param name="max_iteration" type="int" value="3" />
+<!--	迭代次数,貌似迭代次数越大,内存涨得越快-->
+	<param name="max_iteration" type="int" value="3" />  
 <!--	单帧内，畸变纠正后降采样的分辨率-->
 	<param name="filter_size_surf" type="double" value="0.5" />
 	<param name="filter_size_map" type="double" value="0.5" />
