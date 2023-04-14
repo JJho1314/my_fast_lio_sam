@@ -1906,6 +1906,9 @@ bool saveMapService(fast_lio_sam::save_mapRequest& req, fast_lio_sam::save_mapRe
     if(req.destination.empty()) saveMapDirectory = std::getenv("HOME") + savePCDDirectory;
     else saveMapDirectory = std::getenv("HOME") + req.destination;
 
+    system((std::string("exec rm -r ") + savePCDDirectory).c_str());
+    system((std::string("mkdir ") + savePCDDirectory).c_str());
+
     // 保存历史关键帧位姿
     pcl::io::savePCDFileBinary(saveMapDirectory + "/trajectory.pcd", *cloudKeyPoses3D);                    // 关键帧位置
     pcl::io::savePCDFileBinary(saveMapDirectory + "/transformations.pcd", *cloudKeyPoses6D);      // 关键帧位姿
@@ -1926,18 +1929,13 @@ bool saveMapService(fast_lio_sam::save_mapRequest& req, fast_lio_sam::save_mapRe
 
     if(req.resolution != 0)
     {
-    cout << "\n\nSave resolution: " << req.resolution << endl;
+        cout << "\n\nSave resolution: " << req.resolution << endl;
 
-    // 降采样
-    // downSizeFilterCorner.setInputCloud(globalCornerCloud);
-    // downSizeFilterCorner.setLeafSize(req.resolution, req.resolution, req.resolution);
-    // downSizeFilterCorner.filter(*globalCornerCloudDS);
-    // pcl::io::savePCDFileBinary(saveMapDirectory + "/CornerMap.pcd", *globalCornerCloudDS);
-    // 降采样
-    downSizeFilterSurf.setInputCloud(globalSurfCloud);
-    downSizeFilterSurf.setLeafSize(req.resolution, req.resolution, req.resolution);
-    downSizeFilterSurf.filter(*globalSurfCloudDS);
-    pcl::io::savePCDFileBinary(saveMapDirectory + "/SurfMap.pcd", *globalSurfCloudDS);
+        // 降采样
+        downSizeFilterSurf.setInputCloud(globalSurfCloud);
+        downSizeFilterSurf.setLeafSize(req.resolution, req.resolution, req.resolution);
+        downSizeFilterSurf.filter(*globalSurfCloudDS);
+        pcl::io::savePCDFileBinary(saveMapDirectory + "/SurfMap.pcd", *globalSurfCloudDS);
     }
     else
     {
@@ -1945,12 +1943,11 @@ bool saveMapService(fast_lio_sam::save_mapRequest& req, fast_lio_sam::save_mapRe
         downSizeFilterSurf.setInputCloud(globalSurfCloud);
         downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
         downSizeFilterSurf.filter(*globalSurfCloudDS);
-    // pcl::io::savePCDFileBinary(saveMapDirectory + "/CornerMap.pcd", *globalCornerCloud);       
-    // pcl::io::savePCDFileBinary(saveMapDirectory + "/SurfMap.pcd", *globalSurfCloud);           //  稠密点云地图
+    
+        pcl::io::savePCDFileBinary(saveMapDirectory + "/SurfMap.pcd", *globalSurfCloud);           //  稠密点云地图
     }
 
     // 保存到一起，全局关键帧特征点集合
-//   *globalMapCloud += *globalCornerCloud;
     *globalMapCloud += *globalSurfCloud;
     pcl::io::savePCDFileBinary(saveMapDirectory + "/filterGlobalMap.pcd", *globalSurfCloudDS);       //  滤波后地图
     int ret = pcl::io::savePCDFileBinary(saveMapDirectory + "/GlobalMap.pcd", *globalMapCloud);       //  稠密地图
@@ -1976,15 +1973,60 @@ void saveMap()
 /**
  * 保存全局关键帧特征点集合
  */
-// 发布全局地图和保存地图
+// 发布全局地图
 void visualizeGlobalMapThread()
 {
-    ros::Rate rate(0.5);
+    ros::Rate rate(0.2);
     while (ros::ok())
     {
         rate.sleep();
         publishGlobalMap();
     }
+}
+
+void saveGlobalMap()
+{
+    string saveMapDirectory;
+
+    cout << "****************************************************" << endl;
+    cout << "Saving map to pcd files ..." << endl;
+    saveMapDirectory = std::getenv("HOME") + savePCDDirectory;
+
+    system((std::string("exec rm -r ") + saveMapDirectory).c_str());
+    system((std::string("mkdir ") + saveMapDirectory).c_str());
+
+    // 保存历史关键帧位姿
+    pcl::io::savePCDFileBinary(saveMapDirectory + "/trajectory.pcd", *cloudKeyPoses3D);                    // 关键帧位置
+    pcl::io::savePCDFileBinary(saveMapDirectory + "/transformations.pcd", *cloudKeyPoses6D);      // 关键帧位姿
+    // 提取历史关键帧角点、平面点集合
+    //   pcl::PointCloud<PointType>::Ptr globalCornerCloud(new pcl::PointCloud<PointType>());
+    //   pcl::PointCloud<PointType>::Ptr globalCornerCloudDS(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr globalSurfCloud(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr globalSurfCloudDS(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr globalMapCloud(new pcl::PointCloud<PointType>());
+
+    // 注意：拼接地图时，keyframe是lidar系，而fastlio更新后的存到的cloudKeyPoses6D 关键帧位姿是body系下的，需要把
+    //cloudKeyPoses6D  转换为T_world_lidar 。 T_world_lidar = T_world_body * T_body_lidar , T_body_lidar 是外参
+    for (int i = 0; i < (int)cloudKeyPoses6D->size(); i++) {
+        //   *globalCornerCloud += *transformPointCloud(cornerCloudKeyFrames[i],  &cloudKeyPoses6D->points[i]);
+        *globalSurfCloud  += *transformPointCloud(surfCloudKeyFrames[i],    &cloudKeyPoses6D->points[i]);
+        cout << "\r" << std::flush << "Processing feature cloud " << i << " of " << cloudKeyPoses6D->size() << " ..." << endl;
+    }
+
+    // 降采样
+    downSizeFilterSurf.setInputCloud(globalSurfCloud);
+    downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
+    downSizeFilterSurf.filter(*globalSurfCloudDS);
+     
+    pcl::io::savePCDFileBinary(saveMapDirectory + "/SurfMap.pcd", *globalSurfCloud);           //  稠密点云地图
+
+    // 保存到一起，全局关键帧特征点集合
+    *globalMapCloud += *globalSurfCloud;
+    pcl::io::savePCDFileBinary(saveMapDirectory + "/filterGlobalMap.pcd", *globalSurfCloudDS);       //  滤波后地图
+    pcl::io::savePCDFileBinary(saveMapDirectory + "/GlobalMap.pcd", *globalMapCloud);       //  稠密地图
+
+    cout << "****************************************************" << endl;
+    cout << "Saving map to pcd files completed\n" << endl;
 }
 
 //构造H矩阵
@@ -2334,7 +2376,7 @@ int main(int argc, char **argv)
 
     // 回环检测线程
     std::thread loopthread(&loopClosureThread);
-    std::thread visualizeMapThread(visualizeGlobalMapThread);
+    // std::thread visualizeMapThread(visualizeGlobalMapThread);
 
     //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
@@ -2484,6 +2526,12 @@ int main(int argc, char **argv)
                     publish_gnss_path(pubGnssPath);     //   发布gnss轨迹
 
                 publish_path_update(pubPathUpdate); //   发布经过isam2优化后的路径
+                static int jjj = 0;
+                jjj++;
+                if (jjj % 50 == 0)
+                {
+                    publishGlobalMap();             //  发布局部点云特征地图
+                }
             }
             if (scan_pub_en || pcd_save_en)
                 publish_frame_world(pubLaserCloudFull); //   发布world系下的点云
@@ -2534,7 +2582,7 @@ int main(int argc, char **argv)
                 // aver_time_solve = aver_time_solve * (frame_num - 1) / frame_num + (solve_time + solve_H_time) / frame_num;
                 // aver_time_const_H_time = aver_time_const_H_time * (frame_num - 1) / frame_num + solve_time / frame_num;
                 // printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n", t1 - t0, aver_time_match, aver_time_solve, t3 - t1, t5 - t3, aver_time_consu, aver_time_icp, aver_time_const_H_time);
-                printf("[ mapping ]: time: all: %0.6f, Memory used (Mb): %d Mb \n", t5-t0, mem_used_mb); 
+                printf("[ mapping ]: time: all: %0.6fs, Memory used (Mb): %d Mb \n", t5-t0, mem_used_mb); 
                 // cout << "Memory used (Mb): " << mem_used_mb << end; 
         //     }
         }
@@ -2558,9 +2606,10 @@ int main(int argc, char **argv)
     // fout_out.close();
     // fout_pre.close();
 
+    saveGlobalMap();
 
     startFlag = false;
     loopthread.join(); //  分离线程
-
+    // visualizeMapThread.join();
     return 0;
 }

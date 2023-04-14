@@ -98,22 +98,18 @@ publish:
     dense_publish_en: false       # false: low down the points number in a global-frame point clouds scan.
     scan_bodyframe_pub_en: false  # true: output the point cloud scans in IMU-body-frame
     # visual iktree_map  
-    visulize_IkdtreeMap: true
-    # visual iktree_map  
+    visulize_IkdtreeMap: false
+    # 这个必须True不然不能更新历史点云 
     recontructKdTree: true
 
 pcd_save:
     # Export settings
-    savePCD: true                         # https://github.com/TixiaoShan/LIO-SAM/issues/3
-    savePCDDirectory: "/workspace/my_fast_lio_sam/src/FAST_LIO_SAM/PCD/"        # in your home folder, starts and ends with "/". Warning: the code deletes "LOAM" folder then recreates it. See "mapOptimization" for implementation
+    savePCD: false                         # https://github.com/TixiaoShan/LIO-SAM/issues/3
+    savePCDDirectory: "/workspace/SLAM/my_fast_lio_sam/src/FAST_LIO_SAM/PCD/"        # in your home folder, starts and ends with "/". Warning: the code deletes "LOAM" folder then recreates it. See "mapOptimization" for implementation
 
     pcd_save_en: false
     interval: -1                 # how many LiDAR frames saved in each pcd file; 
                                     # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
-
-
-
-
 
 
 
