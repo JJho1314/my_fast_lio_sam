@@ -2256,9 +2256,9 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
  * @param s kf state
  * @param ekfom_data H matrix
  */
-void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) {
+void ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) {
     // 当前帧的点云的size
-    int cnt_pts = scan_down_body_->size();
+    int cnt_pts = feats_down_body->size();
 
     // 配置索引值，用于并行搜索
     std::vector<size_t> index(cnt_pts);
@@ -2278,25 +2278,25 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
     // 在点云的层面上进行并行搜索
     std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
         // 注意这里是引用，或者说是设置别名，而不是赋值，主要是为了使得代码直观一点
-        PointType &point_body = scan_down_body_->points[i];
-        PointType &point_world = scan_down_world_->points[i]; // 目前还是个空值
+        PointType &point_body = feats_down_body->points[i];
+        PointType &point_world = feats_down_world->points[i]; // 目前还是个空值
 
         /* transform to world frame */
         // 将点云帧转到世界坐标系下
-        common::V3F p_body = point_body.getVector3fMap();
+        V3F p_body = point_body.getVector3fMap();
         // p_w = R * p_b + t;
         point_world.getVector3fMap() = R_wl * p_body + t_wl;
         point_world.intensity = point_body.intensity;
 
         // 这里也是引用
-        auto &points_near = nearest_points_[i];
+        auto &points_near = Nearest_Points[i];
         // 如果迭代没有发散的话就继续找对应特征
         if (ekfom_data.converge) {
             /** Find the closest surfaces in the map **/
             // 最近邻搜索
-            ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
+            ivox_->GetClosestPoint(point_world, points_near, NUM_MATCH_POINTS);
             // 判断近邻点是否有5个，否则不进行平面拟合
-            point_selected_surf[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
+            point_selected_surf[i] = points_near.size() >= MIN_NUM_MATCH_POINTS;
             // 判断近邻点是否形成平面，平面法向量存储于plane_coef[i]
             if (point_selected_surf[i]) {
                 point_selected_surf[i] =
@@ -2321,24 +2321,24 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
         }
     });
 
-    effect_feat_num_ = 0;
+    effect_feat_num = 0;
 
     // 存储对应的残差和平面法向量
     corr_pts_.resize(cnt_pts);
     corr_norm_.resize(cnt_pts);
     for (int i = 0; i < cnt_pts; i++) {
         if (point_selected_surf[i]) {
-            corr_norm_[effect_feat_num_] = std::move(plane_coef[i]);
-            corr_pts_[effect_feat_num_] = scan_down_body_->points[i].getVector4fMap();
-            corr_pts_[effect_feat_num_][3] = residuals[i];
+            corr_norm_[effect_feat_num] = std::move(plane_coef[i]);
+            corr_pts_[effect_feat_num] = feats_down_body->points[i].getVector4fMap();
+            corr_pts_[effect_feat_num][3] = residuals[i];
 
-            effect_feat_num_++;
+            effect_feat_num++;
         }
     }
-    corr_pts_.resize(effect_feat_num_);
-    corr_norm_.resize(effect_feat_num_);
+    corr_pts_.resize(effect_feat_num);
+    corr_norm_.resize(effect_feat_num);
 
-    if (effect_feat_num_ < 1) {
+    if (effect_feat_num < 1) {
         ekfom_data.valid = false;
         LOG(WARNING) << "No Effective Points!";
         return;
@@ -2346,11 +2346,11 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
 
     /*** Computation of Measurement Jacobian matrix H and measurements vector ***/
     // 初始化H矩阵
-    ekfom_data.h_x = Eigen::MatrixXd::Zero(effect_feat_num_, 12);  // 23
+    ekfom_data.h_x = Eigen::MatrixXd::Zero(effect_feat_num, 12);  // 23
     // 残差值向量
-    ekfom_data.h.resize(effect_feat_num_);
+    ekfom_data.h.resize(effect_feat_num);
 
-    index.resize(effect_feat_num_);
+    index.resize(effect_feat_num);
     // imu->lidar的外参，s就是当前系统状态
     const M3F off_R = s.offset_R_L_I.toRotationMatrix().cast<float>();
     const V3F off_t = s.offset_T_L_I.cast<float>();
@@ -2377,7 +2377,7 @@ void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double
         V3F A(point_crossmat * C);
 
         // 是否需要估计外参，一般为false
-        if (extrinsic_est_en_) {
+        if (extrinsic_est_en) {
             V3F B(point_be_crossmat * off_R.transpose() * C);
             ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], B[0],
                 B[1], B[2], C[0], C[1], C[2];
