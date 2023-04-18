@@ -107,12 +107,15 @@ double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
 double filter_size_corner_min = 0, filter_size_surf_min = 0, filter_size_map_min = 0, fov_deg = 0;
 double cube_len = 0, HALF_FOV_COS = 0, FOV_DEG = 0, total_distance = 0, lidar_end_time = 0, first_lidar_time = 0.0;
 int effct_feat_num = 0, time_log_counter = 0, scan_count = 0, publish_count = 0;
+int effect_feat_num = 0;
 int iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudValidNum = 0, pcd_save_interval = -1, pcd_index = 0;
 bool point_selected_surf[100000] = {0}; // 是否为平面特征点
 bool lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
+float ESTI_PLANE_THRESHOLD;  // plane threshold
 
 vector<vector<int>> pointSearchInd_surf;
+std::vector<bool> point_selected_surf_;           // selected points
 vector<BoxPointType> cub_needrm; // ikd-tree中，地图需要移除的包围盒序列
 vector<PointVector> Nearest_Points;
 vector<double> extrinT(3, 0.0);
@@ -146,6 +149,10 @@ V3D euler_cur;
 V3D position_last(Zero3d);
 V3D Lidar_T_wrt_IMU(Zero3d); // T lidar to imu (imu = r * lidar + t)
 M3D Lidar_R_wrt_IMU(Eye3d);  // R lidar to imu (imu = r * lidar + t)
+VV4F plane_coef_;                         // plane coeffs
+VV4F corr_pts_;                           // inlier pts
+VV4F corr_norm_;                          // inlier plane norms
+std::vector<float> residuals_;                    // point-to-plane residuals
 
 /*** EKF inputs and output ***/
 MeasureGroup Measures;
@@ -178,9 +185,7 @@ pcl::PointCloud<PointTypePose>::Ptr fastlio_unoptimized_cloudKeyPoses6D(new pcl:
 pcl::PointCloud<PointTypePose>::Ptr gnss_cloudKeyPoses6D(new pcl::PointCloud<PointTypePose>());                //  gnss 轨迹
 
 //ivox 参数
-float ivox_grid_resolution;
 int ivox_nearby_type;
-int ivox_capacity;
 
 // voxel filter paprams
 float odometrySurfLeafSize;
@@ -1581,7 +1586,10 @@ void MapIncremental() {
     for (size_t i = 0; i < cur_pts; ++i) {
         index[i] = i;
     }
-
+    /* 
+        c++ 17 在标准库中新引用了并行算法库execution
+        std::execution::unseq指明在单个线程中一个算法执行流程可以实现为矢量化   
+    */
     std::for_each(std::execution::unseq, index.begin(), index.end(), [&](const size_t &i) {
         /* transform to world frame */
         // 点云由body坐标转到world坐标
@@ -1635,9 +1643,9 @@ void MapIncremental() {
             points_to_add.emplace_back(point_world);
         }
     });
-            // 孤点，需要开辟新的体素，插入该点
+    // 孤点，需要开辟新的体素，插入该点
     ivox_->AddPoints(points_to_add);
-            // 能找到近邻点的点，他们已经被降采样，插入已有体素中
+    // 能找到近邻点的点，他们已经被降采样，插入已有体素中
     ivox_->AddPoints(point_no_need_downsample);
 }
 
@@ -2241,6 +2249,151 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     solve_time += omp_get_wtime() - solve_start_;
 }
 
+/**
+ * Lidar point cloud registration
+ * will be called by the eskf custom observation model
+ * compute point-to-plane residual here
+ * @param s kf state
+ * @param ekfom_data H matrix
+ */
+void LaserMapping::ObsModel(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_data) {
+    // 当前帧的点云的size
+    int cnt_pts = scan_down_body_->size();
+
+    // 配置索引值，用于并行搜索
+    std::vector<size_t> index(cnt_pts);
+    for (size_t i = 0; i < index.size(); ++i) {
+        index[i] = i;
+    }
+
+    std::vector<float> residuals(cnt_pts, 0);
+    std::vector<bool> point_selected_surf(cnt_pts, true);   // selected points
+    VV4F plane_coef(cnt_pts, V4F::Zero());  // plane coeffs
+
+    // lidar在世界坐标系下的位姿, body->world
+    auto R_wl = (s.rot * s.offset_R_L_I).cast<float>();
+    auto t_wl = (s.rot * s.offset_T_L_I + s.pos).cast<float>();
+
+    /** closest surface search and residual computation **/
+    // 在点云的层面上进行并行搜索
+    std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
+        // 注意这里是引用，或者说是设置别名，而不是赋值，主要是为了使得代码直观一点
+        PointType &point_body = scan_down_body_->points[i];
+        PointType &point_world = scan_down_world_->points[i]; // 目前还是个空值
+
+        /* transform to world frame */
+        // 将点云帧转到世界坐标系下
+        common::V3F p_body = point_body.getVector3fMap();
+        // p_w = R * p_b + t;
+        point_world.getVector3fMap() = R_wl * p_body + t_wl;
+        point_world.intensity = point_body.intensity;
+
+        // 这里也是引用
+        auto &points_near = nearest_points_[i];
+        // 如果迭代没有发散的话就继续找对应特征
+        if (ekfom_data.converge) {
+            /** Find the closest surfaces in the map **/
+            // 最近邻搜索
+            ivox_->GetClosestPoint(point_world, points_near, options::NUM_MATCH_POINTS);
+            // 判断近邻点是否有5个，否则不进行平面拟合
+            point_selected_surf[i] = points_near.size() >= options::MIN_NUM_MATCH_POINTS;
+            // 判断近邻点是否形成平面，平面法向量存储于plane_coef[i]
+            if (point_selected_surf[i]) {
+                point_selected_surf[i] =
+                    // 平面拟合并且获取对应的法向量plane_coef[i]
+                    esti_plane(plane_coef_[i], points_near, ESTI_PLANE_THRESHOLD);
+            }
+        }
+
+        // 如果近邻点可以形成平面，则计算point-plane距离残差
+        if (point_selected_surf[i]) {
+            auto temp = point_world.getVector4fMap();
+            temp[3] = 1.0;
+            // 点面距离
+            float pd2 = plane_coef_[i].dot(temp);
+
+            // 根据距离比例判断特征匹配是否有效
+            bool valid_corr = p_body.norm() > 81 * pd2 * pd2;
+            if (valid_corr) {
+                point_selected_surf[i] = true;
+                residuals[i] = pd2;
+            }
+        }
+    });
+
+    effect_feat_num_ = 0;
+
+    // 存储对应的残差和平面法向量
+    corr_pts_.resize(cnt_pts);
+    corr_norm_.resize(cnt_pts);
+    for (int i = 0; i < cnt_pts; i++) {
+        if (point_selected_surf[i]) {
+            corr_norm_[effect_feat_num_] = std::move(plane_coef[i]);
+            corr_pts_[effect_feat_num_] = scan_down_body_->points[i].getVector4fMap();
+            corr_pts_[effect_feat_num_][3] = residuals[i];
+
+            effect_feat_num_++;
+        }
+    }
+    corr_pts_.resize(effect_feat_num_);
+    corr_norm_.resize(effect_feat_num_);
+
+    if (effect_feat_num_ < 1) {
+        ekfom_data.valid = false;
+        LOG(WARNING) << "No Effective Points!";
+        return;
+    }
+
+    /*** Computation of Measurement Jacobian matrix H and measurements vector ***/
+    // 初始化H矩阵
+    ekfom_data.h_x = Eigen::MatrixXd::Zero(effect_feat_num_, 12);  // 23
+    // 残差值向量
+    ekfom_data.h.resize(effect_feat_num_);
+
+    index.resize(effect_feat_num_);
+    // imu->lidar的外参，s就是当前系统状态
+    const M3F off_R = s.offset_R_L_I.toRotationMatrix().cast<float>();
+    const V3F off_t = s.offset_T_L_I.cast<float>();
+    // 系统预测的世界坐标系下的姿态
+    const M3F Rt = s.rot.toRotationMatrix().transpose().cast<float>();
+
+    // 在点云的层面上进行并行化
+    std::for_each(std::execution::par_unseq, index.begin(), index.end(), [&](const size_t &i) {
+        // 原始点坐标(body frame)
+        V3F point_this_be = corr_pts_[i].head<3>();
+        // vector转成反对称矩阵，显然后面的求导是使用右扰动模型
+        M3F point_be_crossmat = SKEW_SYM_MATRIX(point_this_be);
+        // 点云转到imu坐标系下
+        V3F point_this = off_R * point_this_be + off_t;
+        // 转反对称矩阵
+        M3F point_crossmat = SKEW_SYM_MATRIX(point_this);
+
+        /*** get the normal vector of closest surface/corner ***/
+        // 平面特征的法向量
+        V3F norm_vec = corr_norm_[i].head<3>();
+
+        /*** calculate the Measurement Jacobian matrix H ***/
+        V3F C(Rt * norm_vec);
+        V3F A(point_crossmat * C);
+
+        // 是否需要估计外参，一般为false
+        if (extrinsic_est_en_) {
+            V3F B(point_be_crossmat * off_R.transpose() * C);
+            ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], B[0],
+                B[1], B[2], C[0], C[1], C[2];
+        } else {
+            // 只优化位置position和旋转rotation
+            ekfom_data.h_x.block<1, 12>(i, 0) << norm_vec[0], norm_vec[1], norm_vec[2], A[0], A[1], A[2], 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0;
+        }
+
+        /*** Measurement: distance to the closest surface/corner ***/
+        // 存储点面距离，即残差值
+        ekfom_data.h(i) = -corr_pts_[i][3];
+    });
+}
+
+
 int main(int argc, char **argv)
 {
     // allocateMemory();
@@ -2283,6 +2436,10 @@ int main(int argc, char **argv)
     nh.param<double>("mapping/b_acc_cov", b_acc_cov, 0.0001);
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
+
+    nh.param<float>("faster_lio/ivox_grid_resolution", ivox_options_.resolution_, 0.2);
+    nh.param<int>("faster_lio/ivox_nearby_type", ivox_nearby_type, 18);
+    nh.param<float>("faster_lio/esti_plane_threshold", ESTI_PLANE_THRESHOLD, 0.1);
 
     nh.param<double>("preprocess/blind", p_pre->blind, 0.01);
     nh.param<int>("preprocess/lidar_type", p_pre->lidar_type, AVIA);
@@ -2379,7 +2536,7 @@ int main(int argc, char **argv)
     path.header.frame_id = "camera_init";
 
     /*** variables definition ***/
-    int effect_feat_num = 0, frame_num = 0;
+    int frame_num = 0;
     double deltaT, deltaR, aver_time_consu = 0, aver_time_icp = 0, aver_time_match = 0, aver_time_incre = 0, aver_time_solve = 0, aver_time_const_H_time = 0;
     bool flg_EKF_converged, EKF_stop_flg = 0;
 
@@ -2407,7 +2564,7 @@ int main(int argc, char **argv)
     double epsi[23] = {0.001};
     fill(epsi, epsi + 23, 0.001);
 
-    ivox_options_.resolution_ = ivox_grid_resolution;
+    // ivox_options_.resolution_ = ivox_grid_resolution;
     if (ivox_nearby_type == 0) {
         ivox_options_.nearby_type_ = IVoxType::NearbyType::CENTER;
     } else if (ivox_nearby_type == 6) {
@@ -2420,11 +2577,12 @@ int main(int argc, char **argv)
         ROS_WARN("unknown ivox_nearby_type, use NEARBY18");
         ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY18;
     }
-    ivox_options_.capacity_ = ivox_capacity;
+    // ivox_options_.capacity_ = ivox_capacity;
+    ///初始化，其中h_share_model定义了·平面搜索和残差计算
+    // kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
+    kf.init_dyn_share(get_f, df_dx, df_dw, ObsModel, NUM_MAX_ITERATIONS, epsi);
     // localmap init (after LoadParams)
     ivox_ = std::make_shared<IVoxType>(ivox_options_);
-    ///初始化，其中h_share_model定义了·平面搜索和残差计算
-    kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
 
     /*** debug record ***/
     // FILE *fp;
@@ -2493,14 +2651,6 @@ int main(int argc, char **argv)
         if (sync_packages(Measures))
         {
             //第一帧lidar数据
-            if (flg_first_scan)
-            {
-                first_lidar_time = Measures.lidar_beg_time; //记录第一帧绝对时间
-                p_imu->first_lidar_time = first_lidar_time; //记录第一帧绝对时间
-                flg_first_scan = false;
-                continue;
-            }
-
             double t0, t1, t2, t3, t4, t5, match_start, solve_start, svd_time;
 
             match_time = 0;
@@ -2524,9 +2674,19 @@ int main(int argc, char **argv)
 
             // 检查当前lidar数据时间，与最早lidar数据时间是否足够
             flg_EKF_inited = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? false : true;
+            
+            /*** initialize the map ivox ***/
+            if (flg_first_scan)
+            {
+                first_lidar_time = Measures.lidar_beg_time; //记录第一帧绝对时间
+                p_imu->first_lidar_time = first_lidar_time; //记录第一帧绝对时间
+                ivox_->AddPoints(feats_undistort->points);
+                flg_first_scan = false;
+                continue;
+            }
 
             /*** Segment the map in lidar FOV ***/
-            lasermap_fov_segment(); // 根据lidar在W系下的位置，重新确定局部地图的包围盒角点，移除远端的点
+            // lasermap_fov_segment(); // 根据lidar在W系下的位置，重新确定局部地图的包围盒角点，移除远端的点
 
             /*** downsample the feature points in a scan ***/
             downSizeFilterSurf.setInputCloud(feats_undistort);
@@ -2535,26 +2695,28 @@ int main(int argc, char **argv)
             feats_down_size = feats_down_body->points.size(); //当前帧降采样后点数
 
             /*** initialize the map kdtree ***/
-            if (ikdtree.Root_Node == nullptr)
-            {
-                if (feats_down_size > 5)
-                {
-                    ikdtree.set_downsample_param(filter_size_map_min);
-                    feats_down_world->resize(feats_down_size);
-                    for (int i = 0; i < feats_down_size; i++)
-                    {
-                        pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i])); // point转到world系下
-                    }
-                    // world系下对当前帧降采样后的点云，初始化lkd-tree
-                    ikdtree.Build(feats_down_world->points);
-                }
-                continue;
-            }
-            int featsFromMapNum = ikdtree.validnum();
-            kdtree_size_st = ikdtree.size();
+            // if (ikdtree.Root_Node == nullptr)
+            // {
+            //     if (feats_down_size > 5)
+            //     {
+            //         ikdtree.set_downsample_param(filter_size_map_min);
+            //         feats_down_world->resize(feats_down_size);
+            //         for (int i = 0; i < feats_down_size; i++)
+            //         {
+            //             pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i])); // point转到world系下
+            //         }
+            //         // world系下对当前帧降采样后的点云，初始化lkd-tree
+            //         ikdtree.Build(feats_down_world->points);
+            //     }
+            //     continue;
+            // }
 
-            // cout << "[ mapping ]: In num: " << feats_undistort->points.size() << " downsamp " << feats_down_size << " Map num: " << featsFromMapNum << " effect num:" << effct_feat_num << endl;
+            // int featsFromMapNum = ikdtree.validnum();
+            // kdtree_size_st = ikdtree.size();
 
+            // cout << "[ mapping ]: In num: " << feats_undistort->points.size() << " downsamp " << feats_down_size << " Map num: " << featsFromMapNum << " effect num:" << effect_feat_num << endl;
+            cout << "[ mapping ]: In num: " << feats_undistort->points.size() << " downsamp " << feats_down_size
+                << " Map grid num: " << ivox_->NumValidGrids() << " effect num : " << effect_feat_num << endl;
             /*** ICP and iterated Kalman filter update ***/
             if (feats_down_size < 5)
             {
@@ -2564,25 +2726,28 @@ int main(int argc, char **argv)
 
             normvec->resize(feats_down_size);
             feats_down_world->resize(feats_down_size);
+            plane_coef_.resize(feats_down_size, V4F::Zero());
+            residuals_.resize(feats_down_size, 0);
+            pointSearchInd_surf.resize(feats_down_size);
+            point_selected_surf_.resize(feats_down_size, true);
+            Nearest_Points.resize(feats_down_size);
 
             // lidar --> imu
-            V3D ext_euler = SO3ToEuler(state_point.offset_R_L_I);
+            // V3D ext_euler = SO3ToEuler(state_point.offset_R_L_I);
             // fout_pre << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose() << " " << ext_euler.transpose() << " " << state_point.offset_T_L_I.transpose() << " " << state_point.vel.transpose()
             //          << " " << state_point.bg.transpose() << " " << state_point.ba.transpose() << " " << state_point.grav << endl;
 
-            if (visulize_IkdtreeMap) // If you need to see map point, change to "if(1)"
-            {
-                PointVector().swap(ikdtree.PCL_Storage);
-                ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
-                featsFromMap->clear();
-                featsFromMap->points = ikdtree.PCL_Storage;
-                publish_map(pubLaserCloudMap);
-            }
+            // if (visulize_IkdtreeMap) // If you need to see map point, change to "if(1)"
+            // {
+            //     PointVector().swap(ikdtree.PCL_Storage);
+            //     ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
+            //     featsFromMap->clear();
+            //     featsFromMap->points = ikdtree.PCL_Storage;
+            //     publish_map(pubLaserCloudMap);
+            // }
 
-            pointSearchInd_surf.resize(feats_down_size);
-            Nearest_Points.resize(feats_down_size);
-            int rematch_num = 0;
-            bool nearest_search_en = true; //
+            // int rematch_num = 0;
+            // bool nearest_search_en = true; //
 
             t2 = omp_get_wtime();
 
@@ -2600,44 +2765,45 @@ int main(int argc, char **argv)
 
             double t_update_end = omp_get_wtime();
 
-            getCurPose(state_point); //   更新transformTobeMapped
-            /*back end*/
-            // 1.计算当前帧与前一帧位姿变换，如果变化太小，不设为关键帧，反之设为关键帧
-            // 2.添加激光里程计因子、GPS因子、闭环因子
-            // 3.执行因子图优化
-            // 4.得到当前帧优化后的位姿，位姿协方差
-            // 5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合
-            saveKeyFramesAndFactor();
-            // 更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
-            correctPoses();
-            /******* Publish odometry *******/
-            publish_odometry(pubOdomAftMapped);
+            // getCurPose(state_point); //   更新transformTobeMapped
+            // /*back end*/
+            // // 1.计算当前帧与前一帧位姿变换，如果变化太小，不设为关键帧，反之设为关键帧
+            // // 2.添加激光里程计因子、GPS因子、闭环因子
+            // // 3.执行因子图优化
+            // // 4.得到当前帧优化后的位姿，位姿协方差
+            // // 5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合
+            // saveKeyFramesAndFactor();
+            // // 更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
+            // correctPoses();
+            // /******* Publish odometry *******/
+            // publish_odometry(pubOdomAftMapped);
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
-            map_incremental();
+            // map_incremental();
+            MapIncremental();
             t5 = omp_get_wtime();
 
             int mem_used_mb = ( int ) ( Common_tools::get_RSS_Mb() );
 
-            /******* Publish points *******/
-            if (path_en)
-            {
-                // publish_path(pubPath);
-                if (GnssPath_en)
-                    publish_gnss_path(pubGnssPath);     //   发布gnss轨迹
+            // /******* Publish points *******/
+            // if (path_en)
+            // {
+            //     // publish_path(pubPath);
+            //     if (GnssPath_en)
+            //         publish_gnss_path(pubGnssPath);     //   发布gnss轨迹
 
-                publish_path_update(pubPathUpdate); //   发布经过isam2优化后的路径
-                static int jjj = 0;
-                jjj++;
-                if (jjj % 50 == 0)
-                {
-                    publishGlobalMap();             //  发布局部点云特征地图
-                }
-            }
-            if (scan_pub_en || pcd_save_en)
-                publish_frame_world(pubLaserCloudFull); //   发布world系下的点云
-            if (scan_pub_en && scan_body_pub_en)
-                publish_frame_body(pubLaserCloudFull_body); //  发布imu系下的点云
+            //     publish_path_update(pubPathUpdate); //   发布经过isam2优化后的路径
+            //     static int jjj = 0;
+            //     jjj++;
+            //     if (jjj % 50 == 0)
+            //     {
+            //         publishGlobalMap();             //  发布局部点云特征地图
+            //     }
+            // }
+            // if (scan_pub_en || pcd_save_en)
+            //     publish_frame_world(pubLaserCloudFull); //   发布world系下的点云
+            // if (scan_pub_en && scan_body_pub_en)
+            //     publish_frame_body(pubLaserCloudFull_body); //  发布imu系下的点云
 
 
             /*** Debug variables ***/
@@ -2649,7 +2815,7 @@ int main(int argc, char **argv)
         rate.sleep();
     }
 
-    saveGlobalMap();
+    // saveGlobalMap();
 
     startFlag = false;
     loopthread.join(); //  分离线程

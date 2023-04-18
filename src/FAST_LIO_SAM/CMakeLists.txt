@@ -109,7 +109,11 @@ catkin_package(
 add_library(ikd_Tree include/ikd-Tree/ikd_Tree.cpp)
 add_library(preprocess  src/preprocess.cpp)
 add_executable(fastlio_sam_mapping src/laserMapping.cpp)
-target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} ikd_Tree preprocess gtsam glog) 
+target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} 
+${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} ikd_Tree preprocess gtsam glog
+/usr/local/lib/libtbb.so
+/usr/local/lib/libtbbmalloc.so
+/usr/local/lib/libtbbmalloc_proxy.so) 
 target_include_directories(fastlio_sam_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
 
 # add_executable(fastlio_sam_location src/localization.cpp)

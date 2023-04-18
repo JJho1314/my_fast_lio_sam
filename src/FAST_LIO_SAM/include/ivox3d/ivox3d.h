@@ -267,7 +267,6 @@ void IVox<dim, node_type, PointType>::AddPoints(const PointVector& points_to_add
             grids_map_.insert({key, grids_cache_.begin()});
 
             grids_cache_.front().second.InsertPoint(pt);
-
             if (grids_map_.size() >= options_.capacity_) {
                 grids_map_.erase(grids_cache_.back().first);
                 grids_cache_.pop_back();
@@ -278,6 +277,7 @@ void IVox<dim, node_type, PointType>::AddPoints(const PointVector& points_to_add
             grids_map_[key] = grids_cache_.begin();
         }
     });
+
 }
 
 template <int dim, IVoxNodeType node_type, typename PointType>
