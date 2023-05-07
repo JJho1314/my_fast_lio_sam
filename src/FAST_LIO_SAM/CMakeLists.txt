@@ -3,12 +3,8 @@ project(fast_lio_sam)
 
 # SET(CMAKE_BUILD_TYPE "Debug")  
 set(CMAKE_BUILD_TYPE "Release")
-# ADD_COMPILE_OPTIONS(-std=c++14 )
-# ADD_COMPILE_OPTIONS(-std=c++14 )
-# set( CMAKE_CXX_FLAGS "-std=c++14 -O3" )
 
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g -pthread")
-set(CMAKE_CXX_STANDARD 14)
 
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
