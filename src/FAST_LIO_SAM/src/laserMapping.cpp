@@ -486,7 +486,6 @@ void getCurPose(state_ikfom cur_state)
     {
         transformTobeMapped[0] = initialPose[3]; //  roll  使用 eulerAngles(2,1,0) 方法时，顺序是 ypr
         transformTobeMapped[1] = initialPose[4]; //  pitch
-        // transformTobeMapped[2] = initialPose[5] + 1.5;    //  yaw
         transformTobeMapped[2] = initialPose[5]; //  yaw
         cout << "initial pose is" << initialPose[0] << "," << initialPose[1] << "," << initialPose[2] << endl;
         transformTobeMapped[3] = initialPose[0];
