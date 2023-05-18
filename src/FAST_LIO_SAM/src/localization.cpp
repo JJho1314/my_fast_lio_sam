@@ -135,7 +135,7 @@ PointCloudXYZI::Ptr _featsArray;                                  // ikd-tree中
 pcl::VoxelGrid<PointType> downSizeFilterSurf; // 单帧内降采样使用voxel grid
 pcl::VoxelGrid<PointType> downSizeFilterMap;  // 未使用
 
-KD_TREE ikdtree;
+KD_TREE<PointType> ikdtree;
 
 V3F XAxisPoint_body(LIDAR_SP_LEN, 0.0, 0.0);
 V3F XAxisPoint_world(LIDAR_SP_LEN, 0.0, 0.0);

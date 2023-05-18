@@ -127,7 +127,7 @@ PointCloudXYZI::Ptr _featsArray;                                  // ikd-tree中
 pcl::VoxelGrid<PointType> downSizeFilterSurf; // 单帧内降采样使用voxel grid
 pcl::VoxelGrid<PointType> downSizeFilterMap;  // 未使用
 
-KD_TREE ikdtree;
+KD_TREE<PointType> ikdtree;
 
 V3F XAxisPoint_body(LIDAR_SP_LEN, 0.0, 0.0);
 V3F XAxisPoint_world(LIDAR_SP_LEN, 0.0, 0.0);
@@ -2516,8 +2516,7 @@ int main(int argc, char **argv)
             int featsFromMapNum = ikdtree.validnum();
             kdtree_size_st = ikdtree.size();
 
-            // cout << "[ mapping ]: In num: " << feats_undistort->points.size() << " downsamp " << feats_down_size << " Map
-            // num: " << featsFromMapNum << " effect num:" << effct_feat_num << endl;
+            cout << "[ mapping ]: In num: " << feats_undistort->points.size() << " downsamp " << feats_down_size << " Map num: " << featsFromMapNum << " effect num:" << effct_feat_num << endl;
 
             /*** ICP and iterated Kalman filter update ***/
             if (feats_down_size < 5)

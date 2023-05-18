@@ -2,9 +2,11 @@ cmake_minimum_required(VERSION 2.8.3)
 project(fast_lio_sam)
 
 # SET(CMAKE_BUILD_TYPE "Debug")  
-set(CMAKE_BUILD_TYPE "Release")
+SET(CMAKE_BUILD_TYPE "Release")
 
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g -pthread")
+ADD_COMPILE_OPTIONS(-std=c++14 )
+ADD_COMPILE_OPTIONS(-std=c++14 )
+set( CMAKE_CXX_FLAGS "-std=c++14 -O3" )
 
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
@@ -101,17 +103,6 @@ catkin_package(
   DEPENDS EIGEN3 PCL GTSAM
   INCLUDE_DIRS
 )
-
-# add_executable(fastlio_sam_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
-# target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES})
-# target_include_directories(fastlio_sam_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
-
-add_library(ikd_Tree include/ikd-Tree/ikd_Tree.cpp)
-add_library(preprocess  src/preprocess.cpp)
-add_executable(fastlio_sam_mapping src/laserMapping.cpp)
-target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} ikd_Tree preprocess gtsam) 
+add_executable(fastlio_sam_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
+target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} gtsam) 
 target_include_directories(fastlio_sam_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
-
-add_executable(fastlio_sam_location src/localization.cpp)
-target_link_libraries(fastlio_sam_location ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} ikd_Tree preprocess gtsam) 
-target_include_directories(fastlio_sam_location PRIVATE ${PYTHON_INCLUDE_DIRS})
