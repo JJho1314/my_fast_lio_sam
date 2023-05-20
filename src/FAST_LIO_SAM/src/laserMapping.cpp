@@ -215,10 +215,13 @@ pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurroundingKeyPoses(new pcl::KdTreeFLANN<
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeHistoryKeyPoses(new pcl::KdTreeFLANN<PointType>());
 
 // 降采样
-pcl::VoxelGrid<PointType> downSizeFilterCorner;
-// pcl::VoxelGrid<PointType> downSizeFilterSurf;
 pcl::VoxelGrid<PointType> downSizeFilterICP;
 pcl::VoxelGrid<PointType> downSizeFilterSurroundingKeyPoses; // for surrounding key poses of scan-to-map optimization
+// 降采样，发布
+pcl::VoxelGrid<PointType> downSizeFilterGlobalMapKeyFrames; // for global map visualization
+// 降采样
+pcl::VoxelGrid<PointType> downSizeFilterSubMapKeyPoses;
+
 
 float transformTobeMapped[6]; //  当前帧的位姿(world系下)
 
@@ -839,17 +842,20 @@ void saveKeyFramesAndFactor()
     updatePath(thisPose6D); //  可视化update后的path
 }
 
+/*** if path is too large, the rvis will crash ***/
+pcl::KdTreeFLANN<PointType>::Ptr kdtreeGlobalMapPoses(new pcl::KdTreeFLANN<PointType>());
+pcl::PointCloud<PointType>::Ptr subMapKeyPoses(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr subMapKeyPosesDS(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr subMapKeyFrames(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr subMapKeyFramesDS(new pcl::PointCloud<PointType>());
 void recontructIKdTree()
 {
     if (recontructKdTree && updateKdtreeCount > 0)
     {
-        /*** if path is too large, the rvis will crash ***/
-        pcl::KdTreeFLANN<PointType>::Ptr kdtreeGlobalMapPoses(new pcl::KdTreeFLANN<PointType>());
-        pcl::PointCloud<PointType>::Ptr subMapKeyPoses(new pcl::PointCloud<PointType>());
-        pcl::PointCloud<PointType>::Ptr subMapKeyPosesDS(new pcl::PointCloud<PointType>());
-        pcl::PointCloud<PointType>::Ptr subMapKeyFrames(new pcl::PointCloud<PointType>());
-        pcl::PointCloud<PointType>::Ptr subMapKeyFramesDS(new pcl::PointCloud<PointType>());
-
+        subMapKeyPoses->clear();
+        subMapKeyPosesDS->clear();
+        subMapKeyFrames->clear();
+        subMapKeyFramesDS->clear();
         // kdtree查找最近一帧关键帧相邻的关键帧集合
         std::vector<int> pointSearchIndGlobalMap;
         std::vector<float> pointSearchSqDisGlobalMap;
@@ -861,10 +867,7 @@ void recontructIKdTree()
 
         for (int i = 0; i < (int)pointSearchIndGlobalMap.size(); ++i)
             subMapKeyPoses->push_back(cloudKeyPoses3D->points[pointSearchIndGlobalMap[i]]); //  subMap的pose集合
-        // 降采样
-        pcl::VoxelGrid<PointType> downSizeFilterSubMapKeyPoses;
-        downSizeFilterSubMapKeyPoses.setLeafSize(globalMapVisualizationPoseDensity, globalMapVisualizationPoseDensity,
-                                                 globalMapVisualizationPoseDensity); // for global map visualization
+
         downSizeFilterSubMapKeyPoses.setInputCloud(subMapKeyPoses);
         downSizeFilterSubMapKeyPoses.filter(*subMapKeyPosesDS); //  subMap poses  downsample
         // 提取局部相邻关键帧对应的特征点云
@@ -875,15 +878,10 @@ void recontructIKdTree()
             if (pointDistance(subMapKeyPosesDS->points[i], cloudKeyPoses3D->back()) > globalMapVisualizationSearchRadius)
                 continue;
             int thisKeyInd = (int)subMapKeyPosesDS->points[i].intensity;
-            // *globalMapKeyFrames += *transformPointCloud(cornerCloudKeyFrames[thisKeyInd],
-            // &cloudKeyPoses6D->points[thisKeyInd]);
             *subMapKeyFrames += *transformPointCloud(surfCloudKeyFrames[thisKeyInd],
                                                      &cloudKeyPoses6D->points[thisKeyInd]); //  fast_lio only use  surfCloud
         }
-        // 降采样，发布
-        pcl::VoxelGrid<PointType> downSizeFilterGlobalMapKeyFrames; // for global map visualization
-        downSizeFilterGlobalMapKeyFrames.setLeafSize(globalMapVisualizationLeafSize, globalMapVisualizationLeafSize,
-                                                     globalMapVisualizationLeafSize); // for global map visualization
+        
         downSizeFilterGlobalMapKeyFrames.setInputCloud(subMapKeyFrames);
         downSizeFilterGlobalMapKeyFrames.filter(*subMapKeyFramesDS);
 
@@ -979,6 +977,7 @@ bool detectLoopClosureDistance(int *latestID, int *closestID)
 /**
  * 提取key索引的关键帧前后相邻若干帧的关键帧特征点集合，降采样
  */
+pcl::PointCloud<PointType>::Ptr cloud_temp(new pcl::PointCloud<PointType>());
 void loopFindNearKeyframes(pcl::PointCloud<PointType>::Ptr &nearKeyframes, const int &key, const int &searchNum)
 {
     // 提取key索引的关键帧前后相邻若干帧的关键帧特征点集合
@@ -1006,7 +1005,6 @@ void loopFindNearKeyframes(pcl::PointCloud<PointType>::Ptr &nearKeyframes, const
         return;
 
     // 降采样
-    pcl::PointCloud<PointType>::Ptr cloud_temp(new pcl::PointCloud<PointType>());
     downSizeFilterICP.setInputCloud(nearKeyframes);
     downSizeFilterICP.filter(*cloud_temp);
     *nearKeyframes = *cloud_temp;
@@ -1539,6 +1537,8 @@ void map_incremental()
     PointToAdd.reserve(feats_down_size);
     PointNoNeedDownsample.reserve(feats_down_size);
 
+    omp_set_num_threads(numberOfCores); // 结合cmake改成使用全部cpu线程,不然内存上涨会更快,能加速
+#pragma omp parallel for
     // 根据点与所在包围盒中心点的距离，分类是否需要降采样
     for (int i = 0; i < feats_down_size; i++)
     {
@@ -1885,6 +1885,12 @@ bool savePoseService(fast_lio_sam::save_poseRequest &req, fast_lio_sam::save_pos
 /**
  * 发布局部关键帧map的特征点云
  */
+pcl::KdTreeFLANN<PointType>::Ptr kdtreeGlobalMap(new pcl::KdTreeFLANN<PointType>());
+pcl::PointCloud<PointType>::Ptr globalMapKeyPoses(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr globalMapKeyPosesDS(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr globalMapKeyFrames(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr globalMapKeyFramesDS(new pcl::PointCloud<PointType>());
+
 void publishGlobalMap()
 {
     /*** if path is too large, the rvis will crash ***/
@@ -1895,13 +1901,11 @@ void publishGlobalMap()
 
     if (cloudKeyPoses3D->points.empty() == true)
         return;
-    pcl::KdTreeFLANN<PointType>::Ptr kdtreeGlobalMap(new pcl::KdTreeFLANN<PointType>());
-    ;
-    pcl::PointCloud<PointType>::Ptr globalMapKeyPoses(new pcl::PointCloud<PointType>());
-    pcl::PointCloud<PointType>::Ptr globalMapKeyPosesDS(new pcl::PointCloud<PointType>());
-    pcl::PointCloud<PointType>::Ptr globalMapKeyFrames(new pcl::PointCloud<PointType>());
-    pcl::PointCloud<PointType>::Ptr globalMapKeyFramesDS(new pcl::PointCloud<PointType>());
 
+    globalMapKeyPoses->clear();
+    globalMapKeyPosesDS->clear();
+    globalMapKeyFrames->clear();
+    globalMapKeyFramesDS->clear();
     // kdtree查找最近一帧关键帧相邻的关键帧集合
     std::vector<int> pointSearchIndGlobalMap;
     std::vector<float> pointSearchSqDisGlobalMap;
@@ -1931,10 +1935,7 @@ void publishGlobalMap()
         *globalMapKeyFrames += *transformPointCloud(surfCloudKeyFrames[thisKeyInd],
                                                     &cloudKeyPoses6D->points[thisKeyInd]); //  fast_lio only use  surfCloud
     }
-    // 降采样，发布
-    pcl::VoxelGrid<PointType> downSizeFilterGlobalMapKeyFrames; // for global map visualization
-    downSizeFilterGlobalMapKeyFrames.setLeafSize(globalMapVisualizationLeafSize, globalMapVisualizationLeafSize,
-                                                 globalMapVisualizationLeafSize); // for global map visualization
+
     downSizeFilterGlobalMapKeyFrames.setInputCloud(globalMapKeyFrames);
     downSizeFilterGlobalMapKeyFrames.filter(*globalMapKeyFramesDS);
     publishCloud(&pubLaserCloudSurround, globalMapKeyFramesDS, timeLaserInfoStamp, odometryFrame);
@@ -1986,7 +1987,6 @@ bool saveMapService(fast_lio_sam::save_mapRequest &req, fast_lio_sam::save_mapRe
     }
     else
     {
-        //   downSizeFilterCorner.setLeafSize(mappingCornerLeafSize, mappingCornerLeafSize, mappingCornerLeafSize);
         downSizeFilterSurf.setInputCloud(globalSurfCloud);
         downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
         downSizeFilterSurf.filter(*globalSurfCloudDS);
@@ -2089,7 +2089,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     total_residual = 0.0;
 
     /** closest surface search and residual computation **/
-    omp_set_num_threads(numberOfCores); // 结合cmake改成使用全部cpu线程,不然内存上涨会更快
+    omp_set_num_threads(numberOfCores); // 结合cmake改成使用全部cpu线程,不然内存上涨会更快,能加速
 #pragma omp parallel for
     for (int i = 0; i < feats_down_size; i++) // 判断每个点的对应邻域是否符合平面点的假设
     {
@@ -2331,12 +2331,15 @@ int main(int argc, char **argv)
     nh.param<bool>("pcd_save/savePCD", savePCD, false);
     nh.param<std::string>("pcd_save/savePCDDirectory", savePCDDirectory, "/Downloads/LOAM/");
 
-    downSizeFilterCorner.setLeafSize(mappingCornerLeafSize, mappingCornerLeafSize, mappingCornerLeafSize);
     // downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
     downSizeFilterICP.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
     downSizeFilterSurroundingKeyPoses.setLeafSize(surroundingKeyframeDensity, surroundingKeyframeDensity,
                                                   surroundingKeyframeDensity); // for surrounding key poses of
                                                                                // scan-to-map optimization
+    downSizeFilterGlobalMapKeyFrames.setLeafSize(globalMapVisualizationLeafSize, globalMapVisualizationLeafSize,
+                                                  globalMapVisualizationLeafSize); // for global map visualization 
+    downSizeFilterSubMapKeyPoses.setLeafSize(globalMapVisualizationPoseDensity, globalMapVisualizationPoseDensity,
+                                                 globalMapVisualizationPoseDensity); // for global map visualization                                                                          
 
     if (mintialMethod == human)
         gps_initailized = true;
@@ -2575,6 +2578,7 @@ int main(int argc, char **argv)
             // 5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合
             saveKeyFramesAndFactor();
             // 更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
+            cout << "------------------------------------------------------------" << endl;
             correctPoses();
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
@@ -2591,7 +2595,6 @@ int main(int argc, char **argv)
                 // publish_path(pubPath);
                 if (GnssPath_en)
                     publish_gnss_path(pubGnssPath); //   发布gnss轨迹
-
                 publish_path_update(pubPathUpdate); //   发布经过isam2优化后的路径
                 static int jjj = 0;
                 jjj++;

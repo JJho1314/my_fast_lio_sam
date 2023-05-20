@@ -24,11 +24,11 @@ mapping:
     b_gyr_cov: 0.0001
     fov_degree:    90
     det_range:     450.0
-    extrinsic_est_en:  true      # true: enable the online estimation of IMU-LiDAR extrinsic,
-    extrinsic_T: [ 0, 0, 0.28]
-    extrinsic_R: [ 1, 0, 0, 
-                0, 1, 0, 
-                0, 0, 1]
+    extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
+    extrinsic_T: [ 0.04165, 0.02326, -0.0284 ]
+    extrinsic_R: [ 1, 0, 0,
+                   0, 1, 0,
+                   0, 0, 1]
 
 lio_sam: 
     # voxel filter paprams
@@ -72,17 +72,16 @@ lio_sam:
 
     # Extrinsics (imu -> lidar)
     # T_LI
-    extrinsicTrans: [ 0, 0, 0.28]
+    extrinsicTrans: [0, -1.15, -1.27]
     # extrinsicTrans: [0, 0, 0]
 
-    # origin
-    extrinsicRot: [ 1, 0, 0, 
-                0, 1, 0, 
-                0, 0, 1]
-    extrinsicRPY: [ 1, 0, 0, 
-                0, 1, 0, 
-                0, 0, 1]
-
+    # origin 这个影响跟RTK的坐标需要根据实际修改，也可以直接改初始化
+    extrinsicRot: [0.999,    0.034,  0.00228,
+    -0.034,   0.999,  -0.0145,
+    -0.00277,   0.0144,        1]
+    extrinsicRPY: [0.999,    0.034,  0.00228,
+    -0.034,   0.999,  -0.0145,
+    -0.00277,   0.0144,        1]
 
 publish:
     path_en:  true

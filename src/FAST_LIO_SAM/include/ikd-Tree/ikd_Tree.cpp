@@ -1681,8 +1681,8 @@ template <typename PointType>
 void KD_TREE<PointType>::reconstruct(PointVector point_cloud){
     Delete_Storage_Disabled = true;
     delete_tree_nodes(&Root_Node);
-    PointVector ().swap(PCL_Storage);
-    Rebuild_Logger.clear();           
+    PointVector().swap(PCL_Storage);
+    Rebuild_Logger.clear();     
 
     if(Root_Node == nullptr){
         Build(point_cloud);
