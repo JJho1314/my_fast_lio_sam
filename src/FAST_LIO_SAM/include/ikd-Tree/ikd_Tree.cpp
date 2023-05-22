@@ -268,7 +268,7 @@ void KD_TREE<PointType>::multi_thread_rebuild()
             pthread_mutex_unlock(&search_flag_mutex);
             // Lock deleted points cache
             pthread_mutex_lock(&points_deleted_rebuild_mutex_lock);
-            flatten(*Rebuild_Ptr, Rebuild_PCL_Storage, MULTI_THREAD_REC);
+            flatten(*Rebuild_Ptr, Rebuild_PCL_Storage, NOT_RECORD);
             // Unlock deleted points cache
             pthread_mutex_unlock(&points_deleted_rebuild_mutex_lock);
             // Unlock Search
@@ -752,7 +752,7 @@ void KD_TREE<PointType>::Rebuild(KD_TREE_NODE **root)
         father_ptr = (*root)->father_ptr;
         int size_rec = (*root)->TreeSize;
         PCL_Storage.clear();
-        flatten(*root, PCL_Storage, DELETE_POINTS_REC);
+        flatten(*root, PCL_Storage, NOT_RECORD);
         delete_tree_nodes(root);
         BuildTree(root, 0, PCL_Storage.size() - 1, PCL_Storage);
         if (*root != nullptr)
