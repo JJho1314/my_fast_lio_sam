@@ -24,7 +24,6 @@ using namespace Eigen;
 #define LIDAR_SP_LEN    (2)
 #define INIT_COV   (1)
 #define NUM_MATCH_POINTS    (5)
-#define MIN_NUM_MATCH_POINTS  (3)
 #define MAX_MEAS_DIM        (10000)
 
 #define VEC_FROM_ARRAY(v)        v[0],v[1],v[2]
@@ -42,17 +41,6 @@ typedef Vector3d V3D;
 typedef Matrix3d M3D;
 typedef Vector3f V3F;
 typedef Matrix3f M3F;
-typedef Vector4f V4F;
-typedef Vector4d V4D;
-using V5D = Eigen::Matrix<double, 5, 1>;
-using V5F = Eigen::Matrix<float, 5, 1>;
-
-using VV3D = std::vector<V3D, Eigen::aligned_allocator<V3D>>;
-using VV3F = std::vector<V3F, Eigen::aligned_allocator<V3F>>;
-using VV4F = std::vector<V4F, Eigen::aligned_allocator<V4F>>;
-using VV4D = std::vector<V4D, Eigen::aligned_allocator<V4D>>;
-using VV5F = std::vector<V5F, Eigen::aligned_allocator<V5F>>;
-using VV5D = std::vector<V5D, Eigen::aligned_allocator<V5D>>;
 
 #define MD(a,b)  Matrix<double, (a), (b)>
 #define VD(a)    Matrix<double, (a), 1>
@@ -230,17 +218,10 @@ bool esti_normvector(Matrix<T, 3, 1> &normvec, const PointVector &point, const T
     return true;
 }
 
-/**
- * squared distance
- * @param p1
- * @param p2
- * @return
- */
-inline float calc_dist(const PointType &p1, const PointType &p2) {
-    return (p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y) + (p1.z - p2.z) * (p1.z - p2.z);
+float calc_dist(PointType p1, PointType p2){
+    float d = (p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y) + (p1.z - p2.z) * (p1.z - p2.z);
+    return d;
 }
-
-inline float calc_dist(const Eigen::Vector3f &p1, const Eigen::Vector3f &p2) { return (p1 - p2).squaredNorm(); }
 
 template<typename T>
 bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &threshold)

@@ -2,17 +2,19 @@ cmake_minimum_required(VERSION 2.8.3)
 project(fast_lio_sam)
 
 # SET(CMAKE_BUILD_TYPE "Debug")  
-set(CMAKE_BUILD_TYPE "Release")
+SET(CMAKE_BUILD_TYPE "Release")
 
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g -pthread")
+ADD_COMPILE_OPTIONS(-std=c++14 )
+ADD_COMPILE_OPTIONS(-std=c++14 )
+set( CMAKE_CXX_FLAGS "-std=c++14 -O3" )
 
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions" )
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -pthread -std=c++0x -std=c++17 -fexceptions")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -pthread -std=c++0x -std=c++14 -fexceptions")
 
 message("Current CPU archtecture: ${CMAKE_SYSTEM_PROCESSOR}")
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)" )
@@ -102,20 +104,11 @@ catkin_package(
   INCLUDE_DIRS
 )
 
-# add_executable(fastlio_sam_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
-# target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES})
-# target_include_directories(fastlio_sam_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
-
-add_library(ikd_Tree include/ikd-Tree/ikd_Tree.cpp)
-add_library(preprocess  src/preprocess.cpp)
-add_executable(fastlio_sam_mapping src/laserMapping.cpp)
-target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} 
-${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} ikd_Tree preprocess gtsam glog
-/usr/local/lib/libtbb.so
-/usr/local/lib/libtbbmalloc.so
-/usr/local/lib/libtbbmalloc_proxy.so) 
+# 注意：在一些板子上这样写会出错！
+# add_library(ikd_Tree include/ikd-Tree/ikd_Tree.cpp)
+# add_library(preprocess  src/preprocess.cpp)
+# add_executable(fastlio_sam_mapping src/laserMapping.cpp)
+#
+add_executable(fastlio_sam_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
+target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} gtsam) 
 target_include_directories(fastlio_sam_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
-
-# add_executable(fastlio_sam_location src/localization.cpp)
-# target_link_libraries(fastlio_sam_location ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} ikd_Tree preprocess gtsam) 
-# target_include_directories(fastlio_sam_location PRIVATE ${PYTHON_INCLUDE_DIRS})
