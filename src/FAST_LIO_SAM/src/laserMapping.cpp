@@ -1322,6 +1322,84 @@ void loopClosureThread()
     }
 }
 
+// 添加GPS里程计数据到队列
+int gps_count = 0;
+std::chrono::steady_clock::time_point now;
+std::chrono::steady_clock::time_point last;
+double last_E, last_N, last_U;
+void gpsHandler(const nav_msgs::Odometry::ConstPtr &gpsMsg)
+{
+    if (mintialMethod == gps)
+    {
+        if (!gps_initailized && (gpsMsg->pose.pose.position.x != 0 || gpsMsg->pose.pose.position.y != 0) &&
+            (gpsMsg->pose.covariance[0] < 0.003 && gpsMsg->pose.covariance[7] < 0.003))
+        {
+            double imu_roll, imu_pitch, imu_yaw;
+            Eigen::Vector3d Pwl;
+            Eigen::Vector3d Pwi(gpsMsg->pose.pose.position.x, gpsMsg->pose.pose.position.y, gpsMsg->pose.pose.position.z);
+            Eigen::Quaterniond Qwi(gpsMsg->pose.pose.orientation.w, gpsMsg->pose.pose.orientation.x,
+                                   gpsMsg->pose.pose.orientation.y, gpsMsg->pose.pose.orientation.z);
+            tf::Quaternion imu_quat(gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y,
+                                    gpsMsg->pose.pose.orientation.z, gpsMsg->pose.pose.orientation.w);
+            tf::Matrix3x3(imu_quat).getRPY(imu_roll, imu_pitch, imu_yaw); // 进行转换
+            Pwl = Pwi + Qwi.matrix() * Pil;
+            cout << "GPS initailizes" << endl;
+            initialPose.at(0) = Pwl.x();
+            initialPose.at(1) = Pwl.y();
+            initialPose.at(2) = Pwl.z();
+            initialPose.at(3) = imu_roll;
+            initialPose.at(4) = imu_pitch;
+            initialPose.at(5) = imu_yaw;
+
+            gps_initailized = true;
+            last_E = initialPose.at(0);
+            last_N = initialPose.at(1);
+        }
+    }
+
+    if (optimization_with_GPS)
+    {
+        if (last_E != gpsMsg->pose.pose.position.x || last_N != gpsMsg->pose.pose.position.y)
+        {
+            if (GnssPath_en)
+            {
+                double imu_roll, imu_pitch, imu_yaw;
+                Eigen::Vector3d Pwl;
+                Eigen::Vector3d Pwi(gpsMsg->pose.pose.position.x, gpsMsg->pose.pose.position.y, gpsMsg->pose.pose.position.z);
+                Eigen::Quaterniond Qwi(gpsMsg->pose.pose.orientation.w, gpsMsg->pose.pose.orientation.x,
+                                       gpsMsg->pose.pose.orientation.y, gpsMsg->pose.pose.orientation.z);
+                tf::Quaternion imu_quat(gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y,
+                                        gpsMsg->pose.pose.orientation.z, gpsMsg->pose.pose.orientation.w);
+                tf::Matrix3x3(imu_quat).getRPY(imu_roll, imu_pitch, imu_yaw); // 进行转换
+                Pwl = Pwi + Qwi.matrix() * Pil;
+                msg_gnss_pose.header.frame_id = "camera_init";
+                msg_gnss_pose.header.stamp = ros::Time().fromSec(gpsMsg->header.stamp.toSec());
+
+                msg_gnss_pose.pose.position.x = Pwl.x();
+                msg_gnss_pose.pose.position.y = Pwl.y();
+                msg_gnss_pose.pose.position.z = Pwl.z();
+                gps_path.poses.push_back(msg_gnss_pose);
+            }
+
+            gpsQueue.push_back(*gpsMsg);
+        }
+    }
+
+    //  save_gnss path
+    PointTypePose thisPose6D;
+    thisPose6D.x = gpsMsg->pose.pose.position.x;
+    thisPose6D.y = gpsMsg->pose.pose.position.y;
+    thisPose6D.z = gpsMsg->pose.pose.position.z;
+    thisPose6D.intensity = 0;
+    thisPose6D.roll = 0;
+    thisPose6D.pitch = 0;
+    thisPose6D.yaw = 0;
+    thisPose6D.time = lidar_end_time;
+    gnss_cloudKeyPoses6D->push_back(thisPose6D);
+
+    // cout<<"收到GPS"<<endl;
+}
+
 void SigHandle(int sig)
 {
     flg_exit = true;
@@ -1463,8 +1541,7 @@ void lasermap_fov_segment()
 
     BoxPointType New_LocalMap_Points, tmp_boxpoints;
     New_LocalMap_Points = LocalMap_Points; // 新的局部地图角点
-    float mov_dist =
-        max((cube_len - 2.0 * MOV_THRESHOLD * DET_RANGE) * 0.5 * 0.9, double(DET_RANGE * (MOV_THRESHOLD - 1)));
+    float mov_dist = max((cube_len - 2.0 * MOV_THRESHOLD * DET_RANGE) * 0.5 * 0.9, double(DET_RANGE * (MOV_THRESHOLD - 1)));
     for (int i = 0; i < 3; i++)
     {
         tmp_boxpoints = LocalMap_Points;
@@ -1582,84 +1659,6 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     imu_buffer.push_back(msg);
     mtx_buffer.unlock();
     sig_buffer.notify_all();
-}
-
-// 添加GPS里程计数据到队列
-int gps_count = 0;
-std::chrono::steady_clock::time_point now;
-std::chrono::steady_clock::time_point last;
-double last_E, last_N, last_U;
-void gpsHandler(const nav_msgs::Odometry::ConstPtr &gpsMsg)
-{
-    if (mintialMethod == gps)
-    {
-        if (!gps_initailized && (gpsMsg->pose.pose.position.x != 0 || gpsMsg->pose.pose.position.y != 0) &&
-            (gpsMsg->pose.covariance[0] < 0.003 && gpsMsg->pose.covariance[7] < 0.003))
-        {
-            double imu_roll, imu_pitch, imu_yaw;
-            Eigen::Vector3d Pwl;
-            Eigen::Vector3d Pwi(gpsMsg->pose.pose.position.x, gpsMsg->pose.pose.position.y, gpsMsg->pose.pose.position.z);
-            Eigen::Quaterniond Qwi(gpsMsg->pose.pose.orientation.w, gpsMsg->pose.pose.orientation.x,
-                                   gpsMsg->pose.pose.orientation.y, gpsMsg->pose.pose.orientation.z);
-            tf::Quaternion imu_quat(gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y,
-                                    gpsMsg->pose.pose.orientation.z, gpsMsg->pose.pose.orientation.w);
-            tf::Matrix3x3(imu_quat).getRPY(imu_roll, imu_pitch, imu_yaw); // 进行转换
-            Pwl = Pwi + Qwi.matrix() * Pil;
-            cout << "GPS initailizes" << endl;
-            initialPose.at(0) = Pwl.x();
-            initialPose.at(1) = Pwl.y();
-            initialPose.at(2) = Pwl.z();
-            initialPose.at(3) = imu_roll;
-            initialPose.at(4) = imu_pitch;
-            initialPose.at(5) = imu_yaw;
-
-            gps_initailized = true;
-            last_E = initialPose.at(0);
-            last_N = initialPose.at(1);
-        }
-    }
-
-    if (optimization_with_GPS)
-    {
-        if (last_E != gpsMsg->pose.pose.position.x || last_N != gpsMsg->pose.pose.position.y)
-        {
-            if (GnssPath_en)
-            {
-                double imu_roll, imu_pitch, imu_yaw;
-                Eigen::Vector3d Pwl;
-                Eigen::Vector3d Pwi(gpsMsg->pose.pose.position.x, gpsMsg->pose.pose.position.y, gpsMsg->pose.pose.position.z);
-                Eigen::Quaterniond Qwi(gpsMsg->pose.pose.orientation.w, gpsMsg->pose.pose.orientation.x,
-                                       gpsMsg->pose.pose.orientation.y, gpsMsg->pose.pose.orientation.z);
-                tf::Quaternion imu_quat(gpsMsg->pose.pose.orientation.x, gpsMsg->pose.pose.orientation.y,
-                                        gpsMsg->pose.pose.orientation.z, gpsMsg->pose.pose.orientation.w);
-                tf::Matrix3x3(imu_quat).getRPY(imu_roll, imu_pitch, imu_yaw); // 进行转换
-                Pwl = Pwi + Qwi.matrix() * Pil;
-                msg_gnss_pose.header.frame_id = "camera_init";
-                msg_gnss_pose.header.stamp = ros::Time().fromSec(gpsMsg->header.stamp.toSec());
-
-                msg_gnss_pose.pose.position.x = Pwl.x();
-                msg_gnss_pose.pose.position.y = Pwl.y();
-                msg_gnss_pose.pose.position.z = Pwl.z();
-                gps_path.poses.push_back(msg_gnss_pose);
-            }
-
-            gpsQueue.push_back(*gpsMsg);
-        }
-    }
-
-    //  save_gnss path
-    PointTypePose thisPose6D;
-    thisPose6D.x = gpsMsg->pose.pose.position.x;
-    thisPose6D.y = gpsMsg->pose.pose.position.y;
-    thisPose6D.z = gpsMsg->pose.pose.position.z;
-    thisPose6D.intensity = 0;
-    thisPose6D.roll = 0;
-    thisPose6D.pitch = 0;
-    thisPose6D.yaw = 0;
-    thisPose6D.time = lidar_end_time;
-    gnss_cloudKeyPoses6D->push_back(thisPose6D);
-
-    // cout<<"收到GPS"<<endl;
 }
 
 double lidar_mean_scantime = 0.0;
@@ -2760,16 +2759,16 @@ int main(int argc, char **argv)
 
             double t_update_end = omp_get_wtime();
 
-            getCurPose(state_point); //   更新transformTobeMapped
+            // getCurPose(state_point); //   更新transformTobeMapped
             /*back end*/
             // 1.计算当前帧与前一帧位姿变换，如果变化太小，不设为关键帧，反之设为关键帧
             // 2.添加激光里程计因子、GPS因子、闭环因子
             // 3.执行因子图优化
             // 4.得到当前帧优化后的位姿，位姿协方差
             // 5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合
-            saveKeyFramesAndFactor();
+            // saveKeyFramesAndFactor();
             // 更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
-            correctPoses();
+            // correctPoses();
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
             /*** add the feature points to map kdtree ***/
