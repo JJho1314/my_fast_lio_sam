@@ -1486,7 +1486,7 @@ void lasermap_fov_segment()
     }
     LocalMap_Points = New_LocalMap_Points;
 
-    points_cache_collect();
+    // points_cache_collect();
     double delete_begin = omp_get_wtime();
     if (cub_needrm.size() > 0)
         kdtree_delete_counter = ikdtree.Delete_Point_Boxes(cub_needrm);
