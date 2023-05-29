@@ -1,12 +1,20 @@
-## Related Works
+## Related Works and Extended Application
+
+**SLAM:**
 
 1. [ikd-Tree](https://github.com/hku-mars/ikd-Tree): A state-of-art dynamic KD-Tree for 3D kNN search.
-2. [IKFOM](https://github.com/hku-mars/IKFoM): A Toolbox for fast and high-precision on-manifold Kalman filter.
-3. [UAV Avoiding Dynamic Obstacles](https://github.com/hku-mars/dyn_small_obs_avoidance): One of the implementation of FAST-LIO in robot's planning.
-4. [R2LIVE](https://github.com/hku-mars/r2live): A high-precision LiDAR-inertial-Vision fusion work using FAST-LIO as LiDAR-inertial front-end.
-5. [UGV Demo](https://www.youtube.com/watch?v=wikgrQbE6Cs): Model Predictive Control for Trajectory Tracking on Differentiable Manifolds.
-6. [FAST-LIO-SLAM](https://github.com/gisbi-kim/FAST_LIO_SLAM): The integration of FAST-LIO with [Scan-Context](https://github.com/irapkaist/scancontext) **loop closure** module.
-7. [FAST-LIO-LOCALIZATION](https://github.com/HViktorTsoi/FAST_LIO_LOCALIZATION): The integration of FAST-LIO with **Re-localization** function module.
+2. [R2LIVE](https://github.com/hku-mars/r2live): A high-precision LiDAR-inertial-Vision fusion work using FAST-LIO as LiDAR-inertial front-end.
+3. [LI_Init](https://github.com/hku-mars/LiDAR_IMU_Init): A robust, real-time LiDAR-IMU extrinsic initialization and synchronization package..
+4. [FAST-LIO-LOCALIZATION](https://github.com/HViktorTsoi/FAST_LIO_LOCALIZATION): The integration of FAST-LIO with **Re-localization** function module.
+
+**Control and Plan:**
+
+1. [IKFOM](https://github.com/hku-mars/IKFoM): A Toolbox for fast and high-precision on-manifold Kalman filter.
+2. [UAV Avoiding Dynamic Obstacles](https://github.com/hku-mars/dyn_small_obs_avoidance): One of the implementation of FAST-LIO in robot's planning.
+3. [UGV Demo](https://www.youtube.com/watch?v=wikgrQbE6Cs): Model Predictive Control for Trajectory Tracking on Differentiable Manifolds.
+4. [Bubble Planner](https://arxiv.org/abs/2202.12177): Planning High-speed Smooth Quadrotor Trajectories using Receding Corridors.
+
+<!-- 10. [**FAST-LIVO**](https://github.com/hku-mars/FAST-LIVO): Fast and Tightly-coupled Sparse-Direct LiDAR-Inertial-Visual Odometry. -->
 
 ## FAST-LIO
 **FAST-LIO** (Fast LiDAR-Inertial Odometry) is a computationally efficient and robust LiDAR-inertial odometry package. It fuses LiDAR feature points with IMU data using a tightly-coupled iterated extended Kalman filter to allow robust navigation in fast-motion, noisy or cluttered environments where degeneration occurs. Our package address many key issues:
@@ -17,13 +25,12 @@
 ## FAST-LIO 2.0 (2021-07-05 Update)
 <!-- ![image](doc/real_experiment2.gif) -->
 <!-- [![Watch the video](doc/real_exp_2.png)](https://youtu.be/2OvjGnxszf8) -->
-
 <div align="left">
 <img src="doc/real_experiment2.gif" width=49.6% />
 <img src="doc/ulhkwh_fastlio.gif" width = 49.6% >
 </div>
 
-**Related video:**  [FAST-LIO2](https://youtu.be/2OvjGnxszf8),  [FAST-LIO1](https://youtu.be/iYCY6T79oNU),  [FAST-LIO2 + Scan-context Loop Closure](https://www.youtube.com/watch?v=nu8j4yaBMnw)
+**Related video:**  [FAST-LIO2](https://youtu.be/2OvjGnxszf8),  [FAST-LIO1](https://youtu.be/iYCY6T79oNU)
 
 **Pipeline:**
 <div align="center">
@@ -90,14 +97,19 @@ Clone the repository and catkin_make:
 ```export PCL_ROOT={CUSTOM_PCL_PATH}```
 ## 3. Directly run
 Noted:
+
 A. Please make sure the IMU and LiDAR are **Synchronized**, that's important.
+
 B. The warning message "Failed to find match for field 'time'." means the timestamps of each LiDAR points are missed in the rosbag file. That is important for the forward propagation and backwark propagation.
+
+C. We recommend to set the **extrinsic_est_en** to false if the extrinsic is give. As for the extrinsic initiallization, please refer to our recent work: [**Robust and Online LiDAR-inertial Initialization**](https://arxiv.org/abs/2202.11006).
+
 ### 3.1 For Avia
 Connect to your PC to Livox Avia LiDAR by following  [Livox-ros-driver installation](https://github.com/Livox-SDK/livox_ros_driver), then
 ```
     cd ~/$FAST_LIO_ROS_DIR$
     source devel/setup.bash
-    roslaunch fast_lio mapping_avia.launch
+    roslaunch fast_lio_sam mapping_avia.launch
     roslaunch livox_ros_driver livox_lidar_msg.launch
 ```
 - For livox serials, FAST-LIO only support the data collected by the ``` livox_lidar_msg.launch ``` since only its ``` livox_ros_driver/CustomMsg ``` data structure produces the timestamp of each LiDAR point which is very important for the motion undistortion. ``` livox_lidar.launch ``` can not produce it right now.
@@ -124,16 +136,17 @@ Edit ``` config/velodyne.yaml ``` to set the below parameters:
 
 1. LiDAR point cloud topic name: ``` lid_topic ```
 2. IMU topic name: ``` imu_topic ``` (both internal and external, 6-aixes or 9-axies are fine)
-3. Line number (we tested 16, 32 and 64 line, but not tested 128 or above): ``` scan_line ```
-4. Translational extrinsic: ``` extrinsic_T ```
-5. Rotational extrinsic: ``` extrinsic_R ``` (only support rotation matrix)
+3. Set the parameter ```timestamp_unit``` based on the unit of **time** (Velodyne) or **t** (Ouster) field in PoindCloud2 rostopic
+4. Line number (we tested 16, 32 and 64 line, but not tested 128 or above): ``` scan_line ```
+5. Translational extrinsic: ``` extrinsic_T ```
+6. Rotational extrinsic: ``` extrinsic_R ``` (only support rotation matrix)
 - The extrinsic parameters in FAST-LIO is defined as the LiDAR's pose (position and rotation matrix) in IMU body frame (i.e. the IMU is the base frame).
 
 Step B: Run below
 ```
     cd ~/$FAST_LIO_ROS_DIR$
     source devel/setup.bash
-    roslaunch fast_lio mapping_velodyne.launch
+    roslaunch fast_lio_sam mapping_velodyne.launch
 ```
 
 Step C: Run LiDAR's ros driver or play rosbag.
@@ -162,7 +175,7 @@ Files: Can be downloaded from [google drive](https://drive.google.com/drive/fold
 
 Run:
 ```
-roslaunch fast_lio mapping_avia.launch
+roslaunch fast_lio_sam mapping_avia.launch
 rosbag play YOUR_DOWNLOADED.bag
 
 ```
@@ -175,7 +188,7 @@ We produce [Rosbag Files](https://drive.google.com/drive/folders/1VBK5idI1oyW0GC
     
 Run:
 ```
-roslaunch fast_lio mapping_velodyne.launch
+roslaunch fast_lio_sam mapping_velodyne.launch
 rosbag play YOUR_DOWNLOADED.bag
 ```
 

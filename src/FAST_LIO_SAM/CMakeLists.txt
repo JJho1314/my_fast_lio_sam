@@ -1,8 +1,7 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(fast_lio_sam)
 
-# SET(CMAKE_BUILD_TYPE "Debug")  
-SET(CMAKE_BUILD_TYPE "Release")
+SET(CMAKE_BUILD_TYPE "Debug")
 
 ADD_COMPILE_OPTIONS(-std=c++14 )
 ADD_COMPILE_OPTIONS(-std=c++14 )
@@ -23,8 +22,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)" )
   message("Processer number:  ${N}")
   if(N GREATER 4)
     add_definitions(-DMP_EN)
-    add_definitions(-DMP_PROC_NUM=N)
-    message("core for MP: ${N}")
+    add_definitions(-DMP_PROC_NUM=3)
+    message("core for MP: 3")
   elseif(N GREATER 3)
     add_definitions(-DMP_EN)
     add_definitions(-DMP_PROC_NUM=2)
@@ -58,11 +57,7 @@ find_package(catkin REQUIRED COMPONENTS
 )
 
 find_package(Eigen3 REQUIRED)
-find_package(PCL REQUIRED)
-find_package (GeographicLib REQUIRED)
-
-find_package( GTSAMCMakeTools )
-find_package(GTSAM REQUIRED QUIET)
+find_package(PCL 1.8 REQUIRED)
 
 message(Eigen: ${EIGEN3_INCLUDE_DIR})
 
@@ -71,26 +66,11 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${PYTHON_INCLUDE_DIRS}
-  ${GTSAM_INCLUDE_DIR}
-  ${GeographicLib_INCLUDE_DIRS}
-  include
-  ./src/tools/)
-
-  # link directories
-# link_directories(
-#   ${GTSAM_LIBRARY_DIRS}
-# )
+  include)
 
 add_message_files(
   FILES
   Pose6D.msg
-)
-
-add_service_files(
-  DIRECTORY srv
-  FILES
-  save_map.srv
-  save_pose.srv
 )
 
 generate_messages(
@@ -100,15 +80,10 @@ generate_messages(
 
 catkin_package(
   CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
-  DEPENDS EIGEN3 PCL GTSAM
+  DEPENDS EIGEN3 PCL
   INCLUDE_DIRS
 )
 
-# 注意：在一些板子上这样写会出错！
-# add_library(ikd_Tree include/ikd-Tree/ikd_Tree.cpp)
-# add_library(preprocess  src/preprocess.cpp)
-# add_executable(fastlio_sam_mapping src/laserMapping.cpp)
-#
-add_executable(fastlio_sam_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp include/Scancontext.cpp)
-target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} gtsam) 
-target_include_directories(fastlio_sam_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
+add_executable(fastlio_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
+target_link_libraries(fastlio_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES})
+target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
