@@ -58,6 +58,10 @@ find_package(catkin REQUIRED COMPONENTS
 
 find_package(Eigen3 REQUIRED)
 find_package(PCL 1.8 REQUIRED)
+find_package (GeographicLib REQUIRED)
+
+find_package( GTSAMCMakeTools )
+find_package(GTSAM REQUIRED QUIET)
 
 message(Eigen: ${EIGEN3_INCLUDE_DIR})
 
@@ -65,12 +69,21 @@ include_directories(
 	${catkin_INCLUDE_DIRS} 
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
-  ${PYTHON_INCLUDE_DIRS}
-  include)
+  ${GTSAM_INCLUDE_DIR}
+  ${GeographicLib_INCLUDE_DIRS}
+  include
+  ./src/tools/)
 
 add_message_files(
   FILES
   Pose6D.msg
+)
+
+add_service_files(
+  DIRECTORY srv
+  FILES
+  save_map.srv
+  save_pose.srv
 )
 
 generate_messages(
@@ -80,10 +93,15 @@ generate_messages(
 
 catkin_package(
   CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
-  DEPENDS EIGEN3 PCL
+  DEPENDS EIGEN3 PCL GTSAM
   INCLUDE_DIRS
 )
 
-add_executable(fastlio_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
-target_link_libraries(fastlio_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES})
-target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
+# 注意：在一些板子上这样写会出错！
+# add_library(ikd_Tree include/ikd-Tree/ikd_Tree.cpp)
+# add_library(preprocess  src/preprocess.cpp)
+# add_executable(fastlio_sam_mapping src/laserMapping.cpp)
+#
+add_executable(fastlio_sam_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp include/Scancontext.cpp)
+target_link_libraries(fastlio_sam_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${GeographicLib_LIBRARIES} gtsam) 
+target_include_directories(fastlio_sam_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
